@@ -164,15 +164,33 @@ class DatabaseService:
             )
             return result.scalar_one_or_none()
     
-    async def assign_role_to_user(self, user_id: int, role_name: str) -> bool:
-        """Assign a role to a user"""
+    async def assign_role_to_user(self, user_id: int, role_name: str) -> Optional[User]:
+        """Assign a role to a user and return the updated user with roles loaded"""
         async with get_db_session() as session:
-            user = await session.get(User, user_id)
-            role = await self.get_role_by_name(role_name)
-            if user and role:
-                user.roles.append(role)
-                return True
-            return False
+            # Fetch user with roles eagerly loaded
+            result = await session.execute(
+                select(User)
+                .options(selectinload(User.roles).selectinload(Role.permissions))
+                .where(User.id == user_id)
+            )
+            user = result.scalar_one_or_none()
+            
+            if not user:
+                return None
+            
+            # Fetch role within the same session
+            role_result = await session.execute(
+                select(Role).where(Role.name == role_name)
+            )
+            role = role_result.scalar_one_or_none()
+            
+            if not role:
+                return None
+            
+            user.roles.append(role)
+            await session.flush()
+            await session.refresh(user)
+            return user
     
     # Permission operations
     async def create_permission(

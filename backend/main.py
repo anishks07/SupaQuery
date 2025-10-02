@@ -149,11 +149,14 @@ async def register(user_data: UserCreate):
             full_name=user_data.full_name
         )
         
-        # Assign default 'user' role
-        await db_service.assign_role_to_user(user.id, 'user')
+        # Assign default 'user' role and get updated user with roles loaded
+        user = await db_service.assign_role_to_user(user.id, 'user')
         
-        # Reload user to get roles
-        user = await db_service.get_user_by_id(user.id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to assign default role"
+            )
         
         return UserResponse(
             id=user.id,
