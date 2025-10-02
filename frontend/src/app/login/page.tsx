@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/AuthContext';
@@ -18,11 +18,32 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [shouldRedirect, setShouldRedirect] = useState(false);
 
-  // Redirect if already authenticated
-  if (isAuthenticated) {
-    router.push('/');
-    return null;
+  // Check if already authenticated and set redirect flag
+  useEffect(() => {
+    if (isAuthenticated) {
+      setShouldRedirect(true);
+    }
+  }, [isAuthenticated]);
+
+  // Handle redirect in separate effect
+  useEffect(() => {
+    if (shouldRedirect) {
+      router.push('/');
+    }
+  }, [shouldRedirect, router]);
+
+  // Show loading while redirecting
+  if (shouldRedirect) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-muted">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Redirecting...</p>
+        </div>
+      </div>
+    );
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -32,7 +53,7 @@ export default function LoginPage() {
 
     try {
       await login(username, password);
-      router.push('/');
+      // Don't redirect here - let useEffect handle it after state updates
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
