@@ -6,14 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 import os
-import asyncio
 from pathlib import Path
 import uuid
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 from app.services.document_processor import DocumentProcessor
 from app.services.graph_rag import GraphRAGService
@@ -140,8 +135,8 @@ async def register(user_data: UserCreate):
                 detail="Email already registered"
             )
         
-        # Create user (hash password in thread pool - bcrypt is blocking)
-        hashed_password = await asyncio.to_thread(get_password_hash, user_data.password)
+        # Create user
+        hashed_password = get_password_hash(user_data.password)
         user = await db_service.create_user(
             username=user_data.username,
             email=user_data.email,
