@@ -32,6 +32,8 @@ import {
   UploadCloud
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import ProtectedRoute from '@/components/ProtectedRoute'
+import UserMenu from '@/components/UserMenu'
 
 interface UploadedFile {
   id: string
@@ -360,8 +362,9 @@ export default function AIDashboard() {
   }
 
   return (
-    <ThemeWrapper>
-      <div className="flex h-screen bg-background">
+    <ProtectedRoute>
+      <ThemeWrapper>
+        <div className="flex h-screen bg-background">
         {/* Mobile Panel Overlay */}
         <AnimatePresence>
           {showMobilePanel && (
@@ -554,6 +557,7 @@ export default function AIDashboard() {
                   <Download className="h-3 w-3 md:h-4 md:w-4 mr-1 md:mr-2" />
                   <span className="hidden sm:inline">Export</span>
                 </Button>
+                <UserMenu />
               </div>
             </div>
           </div>
@@ -694,5 +698,6 @@ export default function AIDashboard() {
         </div>
       </div>
     </ThemeWrapper>
+    </ProtectedRoute>
   )
 }
