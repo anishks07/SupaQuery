@@ -127,16 +127,32 @@ class DatabaseService:
     async def update_user(self, user_id: int, **kwargs) -> Optional[User]:
         """Update user fields"""
         async with get_db_session() as session:
-            result = await session.execute(select(User).where(User.id == user_id))
+            result = await session.execute(
+                select(User)
+                .options(selectinload(User.roles))
+                .where(User.id == user_id)
+            )
             user = result.scalar_one_or_none()
             if user:
                 for key, value in kwargs.items():
-                    if hasattr(user, key):
+                    if value is not None and hasattr(user, key):
                         setattr(user, key, value)
                 user.updated_at = datetime.utcnow()
                 await session.flush()
                 await session.refresh(user)
             return user
+    
+    async def update_user_password(self, user_id: int, hashed_password: str) -> bool:
+        """Update user password"""
+        async with get_db_session() as session:
+            result = await session.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user:
+                user.hashed_password = hashed_password
+                user.updated_at = datetime.utcnow()
+                await session.flush()
+                return True
+            return False
     
     async def delete_user(self, user_id: int) -> bool:
         """Delete a user"""

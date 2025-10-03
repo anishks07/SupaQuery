@@ -80,7 +80,15 @@ export default function SignupPage() {
       await signup(formData.username, formData.email, formData.password, formData.full_name);
       // Don't redirect here - let useEffect handle it after state updates
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Signup failed');
+      // Ensure error is always a string
+      if (err instanceof Error) {
+        setError(err.message);
+      } else if (typeof err === 'string') {
+        setError(err);
+      } else {
+        console.error('Signup error:', err);
+        setError('Signup failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

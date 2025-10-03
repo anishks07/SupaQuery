@@ -55,7 +55,15 @@ export default function LoginPage() {
       await login(username, password);
       // Don't redirect here - let useEffect handle it after state updates
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      // Ensure error is always a string
+      if (err instanceof Error) {
+        setError(err.message);
+      } else if (typeof err === 'string') {
+        setError(err);
+      } else {
+        console.error('Login error:', err);
+        setError('Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

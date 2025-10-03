@@ -231,6 +231,120 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
     )
 
 
+from pydantic import BaseModel, EmailStr
+
+class UserUpdate(BaseModel):
+    """User profile update schema"""
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+class PasswordChange(BaseModel):
+    """Password change schema"""
+    current_password: str
+    new_password: str
+
+
+@app.put("/api/users/me", response_model=UserResponse)
+async def update_current_user(
+    user_update: UserUpdate,
+    current_user: User = Depends(get_current_user)
+):
+    """Update current user profile"""
+    try:
+        # Check if email is being changed and if it's already taken
+        if user_update.email and user_update.email != current_user.email:
+            existing_email = await db_service.get_user_by_email(user_update.email)
+            if existing_email:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered"
+                )
+        
+        # Update user
+        updated_user = await db_service.update_user(
+            user_id=current_user.id,
+            full_name=user_update.full_name,
+            email=user_update.email
+        )
+        
+        if not updated_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        return UserResponse(
+            id=updated_user.id,
+            username=updated_user.username,
+            email=updated_user.email,
+            full_name=updated_user.full_name,
+            is_active=updated_user.is_active,
+            is_superuser=updated_user.is_superuser,
+            created_at=updated_user.created_at,
+            updated_at=updated_user.updated_at,
+            roles=[role.name for role in updated_user.roles]
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update profile: {str(e)}"
+        )
+
+
+@app.post("/api/users/change-password")
+async def change_password(
+    password_change: PasswordChange,
+    current_user: User = Depends(get_current_user)
+):
+    """Change current user password"""
+    try:
+        # Verify current password
+        user = await authenticate_user(current_user.username, password_change.current_password)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Current password is incorrect"
+            )
+        
+        # Validate new password
+        if len(password_change.new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password must be at least 8 characters long"
+            )
+        
+        if len(password_change.new_password) > 72:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be 72 characters or less"
+            )
+        
+        # Hash new password (in thread pool - bcrypt is blocking)
+        hashed_password = await asyncio.to_thread(get_password_hash, password_change.new_password)
+        
+        # Update password
+        success = await db_service.update_user_password(current_user.id, hashed_password)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update password"
+            )
+        
+        return {"message": "Password changed successfully"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to change password: {str(e)}"
+        )
+
+
 # ==================== DOCUMENT ENDPOINTS (WITH RBAC) ====================
 
 @app.post("/api/upload")
