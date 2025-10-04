@@ -74,7 +74,16 @@ async def startup_event():
     try:
         await db_service.init_db()
         print(f"   ✓ Database initialized")
-        print(f"   - Documents indexed: {len(await graph_rag_service.list_documents())}")
+        
+        # Get document count from database
+        try:
+            docs = await db_service.list_documents(limit=1)
+            # Get stats from graph
+            stats = graph_rag_service.graph.get_stats()
+            print(f"   - Documents indexed: {stats['documents']} (graph), {len(docs)} (db sample)")
+        except Exception as count_error:
+            print(f"   - Documents indexed: Unable to retrieve ({count_error})")
+        
         print(f"   - Authentication: Enabled (JWT)")
         print(f"   - RBAC: Enabled")
     except Exception as e:
@@ -231,6 +240,22 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
     )
 
 
+@app.get("/api/users/me/permissions")
+async def get_current_user_permissions(current_user: User = Depends(get_current_user)):
+    """Get current user permissions (debug endpoint)"""
+    permissions = []
+    for role in current_user.roles:
+        for perm in role.permissions:
+            permissions.append(f"{perm.resource}:{perm.action}")
+    
+    return {
+        "username": current_user.username,
+        "roles": [role.name for role in current_user.roles],
+        "permissions": permissions,
+        "is_superuser": current_user.is_superuser
+    }
+
+
 from pydantic import BaseModel, EmailStr
 
 class UserUpdate(BaseModel):
@@ -358,6 +383,10 @@ async def upload_files(
     Process them and add to the knowledge graph
     Requires 'documents:create' permission
     """
+    print(f"📤 Upload request from user: {current_user.username} (ID: {current_user.id})")
+    print(f"   Files: {[f.filename for f in files]}")
+    print(f"   Public: {is_public}")
+    
     try:
         uploaded_files = []
         
@@ -546,6 +575,10 @@ async def chat(
     Results are filtered by accessible documents
     Requires 'chat:read' permission
     """
+    print(f"💬 Chat request from user: {current_user.username}")
+    print(f"   Message: {request.message}")
+    print(f"   Document IDs: {request.document_ids}")
+    print(f"   Session ID: {request.session_id}")
     try:
         # Get or create session ID
         session_id = request.session_id if hasattr(request, 'session_id') and request.session_id else str(uuid.uuid4())

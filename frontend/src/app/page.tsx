@@ -178,20 +178,30 @@ export default function AIDashboard() {
     })
 
     try {
-      const response = await fetch('/api/upload', {
+      // Get auth token from localStorage
+      const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+      
+      if (!token) {
+        throw new Error('Please log in to upload files');
+      }
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/upload`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
         body: formData,
       })
 
       const data = await response.json()
 
-      if (data.success) {
+      if (response.ok) {
         // Update files with processed status
         newFiles.forEach(file => {
           simulateUpload(file.id)
         })
       } else {
-        throw new Error(data.error || 'Upload failed')
+        throw new Error(data.detail || data.error || 'Upload failed')
       }
     } catch (error) {
       console.error('Upload error:', error)
@@ -269,21 +279,29 @@ export default function AIDashboard() {
     setIsTyping(true)
 
     try {
+      // Get auth token from localStorage
+      const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+      
+      if (!token) {
+        throw new Error('Please log in to use chat');
+      }
+
       // Call the chat API
-      const response = await fetch('/api/chat', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           message: currentInput,
-          documents: uploadedFiles
+          session_id: null
         }),
       })
 
       const data = await response.json()
 
-      if (data.success) {
+      if (response.ok && data.response) {
         const aiMessage: Message = {
           id: Math.random().toString(36).substr(2, 9),
           role: 'assistant',
@@ -293,7 +311,7 @@ export default function AIDashboard() {
         }
         setMessages(prev => [...prev, aiMessage])
       } else {
-        throw new Error(data.error || 'Failed to get response')
+        throw new Error(data.detail || data.error || 'Failed to get response')
       }
     } catch (error) {
       console.error('Chat error:', error)
