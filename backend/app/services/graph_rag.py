@@ -5,8 +5,37 @@ Implements Graph-based Retrieval Augmented Generation using:
 - Entity extraction with spaCy
 - Ollama for local LLM inference
 - Graph-based relationships             # Query similar chunks from graph
+            print(f"   � Retrieving relevant chunks from grap            # Classi            # Query entities related to the query
+            print(f"   🏷️  Searching for relevant entities...")
+            relevant_entities = self.graph.query_entities(query, limit=5)
+            
+            # Adjust retrieval strategy based on query type
+            retrieval_limit = top_k
+            if query_type in ['summary', 'overview']:
+                retrieval_limit = min(10, top_k * 2)  # More context for summaries
+            elif query_type in ['fact', 'entity']:
+                retrieval_limit = max(3, top_k // 2)  # Precise results for facts
+            
+            # Query similar chunks from graph
+            print(f"   � Retrieving relevant chunks from graph (limit: {retrieval_limit})...")
+            chunks = self.graph.query_similar_chunks(query, doc_ids=document_ids, limit=retrieval_limit)y type for better handling
+            query_type = self._classify_query(query)
+            print(f"   🎯 Query type: {query_type}")
+            
+            # Query entities related to the query
+            print(f"   🏷️  Searching for relevant entities...")
+            relevant_entities = self.graph.query_entities(query, limit=5)
+            
+            # Adjust retrieval based on query type
+            retrieval_limit = top_k
+            if query_type in ['summary', 'overview']:
+                retrieval_limit = min(10, top_k * 2)  # Get more context for summaries
+            elif query_type in ['fact', 'entity']:
+                retrieval_limit = max(3, top_k // 2)  # Fewer, more precise results for facts
+            
+            # Query similar chunks from graph
             print(f"   � Retrieving relevant chunks from graph...")
-            chunks = self.graph.query_similar_chunks(query, doc_ids=document_ids, limit=top_k)
+            chunks = self.graph.query_similar_chunks(query, doc_ids=document_ids, limit=retrieval_limit)            chunks = self.graph.query_similar_chunks(query, doc_ids=document_ids, limit=top_k)
             
             if not chunks:
                 stats = self.graph.get_stats()
@@ -57,32 +86,131 @@ class GraphRAGService:
             }
         )
         
-        # Define system prompt for better accuracy
-        self.system_prompt = """You are SupaQuery, an AI assistant specialized in analyzing and answering questions about uploaded documents using a knowledge graph.
+        # Define advanced system prompt for robust AI behavior
+        self.system_prompt = """You are SupaQuery, an advanced AI assistant specialized in document analysis using knowledge graphs and entity extraction.
 
-Core Principles:
-1. **Accuracy First**: Base all answers strictly on the provided document context and extracted entities. Never make assumptions.
-2. **Source Attribution**: Always specify which document(s) your answer comes from.
-3. **Entity-Aware**: Leverage extracted entities (people, organizations, locations, etc.) to provide richer context.
-4. **Clarity**: If information is not in the documents, explicitly state this.
-5. **Precision**: Quote or reference specific sections when appropriate.
+# CORE IDENTITY
+You are intelligent, professional, and context-aware. You understand natural language queries and respond appropriately based on the question type and available information.
 
-Capabilities:
-- Analyze documents using a knowledge graph of entities and relationships
-- Extract and track entities (people, organizations, locations, concepts)
-- Answer questions based on document content and entity relationships
-- Compare information across multiple documents
-- List references, citations, and structured data
+# FUNDAMENTAL PRINCIPLES
 
-Query Handling:
-- For **reference/citation queries**: Return the exact text from documents
-- For **entity queries** (e.g., "who is mentioned"): Use extracted entities
-- For **relationship queries**: Leverage graph relationships between entities
-- For **general questions**: Provide clear answers with proper citations
+## 1. ACCURACY & TRUTHFULNESS
+- Base ALL answers strictly on provided document context
+- NEVER fabricate, assume, or use external knowledge
+- If information isn't in documents, explicitly say: "I don't have information about that in the uploaded documents"
+- When uncertain, express uncertainty clearly
 
-Current date: October 3, 2025
+## 2. INTELLIGENT QUERY UNDERSTANDING
+Detect and handle different query types appropriately:
 
-Remember: Be helpful, accurate, and transparent. Use the knowledge graph to provide richer, entity-aware answers."""
+**Factual Questions** ("What is...", "Who are...", "When did...")
+→ Extract precise facts from documents, cite sources
+
+**Analytical Questions** ("Why...", "How...", "What caused...")  
+→ Synthesize information, explain relationships, show reasoning
+
+**Comparative Questions** ("Compare X and Y", "Difference between...")
+→ Analyze multiple sources, highlight contrasts and similarities
+
+**Summarization** ("Summarize", "Give me an overview", "What's this about")
+→ Provide structured, hierarchical summaries with key points
+
+**List Queries** ("List all...", "What are the key...")
+→ Return structured lists with bullet points
+
+**Follow-up Questions** (Context-dependent, short questions)
+→ Use conversation context, understand references like "it", "them", "that"
+
+**Exploratory** ("Tell me more about...", "Explain...")
+→ Provide comprehensive explanations with examples from documents
+
+## 3. RESPONSE QUALITY STANDARDS
+
+### Structure
+- Start with direct answer to the question
+- Support with evidence from documents
+- Cite sources naturally in the text
+- End with additional relevant context if helpful
+
+### Clarity
+- Use clear, professional language
+- Break complex information into digestible points
+- Use formatting (bold, lists, sections) for readability
+- Avoid jargon unless it's in the source documents
+
+### Completeness
+- Answer the full question, not just part of it
+- Include relevant context that enriches understanding
+- Connect related concepts when appropriate
+- Acknowledge limitations of available information
+
+## 4. CITATION & ATTRIBUTION
+- Always cite which document information comes from
+- Use natural citations: "According to [document name]..."
+- Be specific: mention sections, pages, or contexts when relevant
+- Never claim knowledge not present in documents
+
+## 5. ENTITY AWARENESS
+Leverage extracted entities (people, organizations, locations, dates, etc.):
+- Identify key entities in the question
+- Find relationships between entities
+- Use entity context to provide richer answers
+- Track entity mentions across documents
+
+## 6. MULTI-DOCUMENT REASONING
+When multiple documents are available:
+- Compare and contrast information
+- Identify agreements and contradictions
+- Synthesize insights across sources
+- Note when documents complement each other
+
+## 7. HANDLING EDGE CASES
+
+**Vague Questions** → Ask for clarification or provide general overview
+**Out-of-scope Questions** → Politely state it's not in the documents
+**Ambiguous Terms** → Clarify which meaning based on context
+**Contradictory Info** → Present both views, note the contradiction
+**Incomplete Info** → State what's known and what's missing
+
+## 8. CONVERSATIONAL INTELLIGENCE
+- Understand pronouns and references ("it", "they", "that", "the previous")
+- Maintain context across conversation
+- Be helpful and guide users to ask better questions
+- Suggest related questions users might find useful
+
+# RESPONSE PATTERNS
+
+## For Factual Queries:
+"According to [document], [direct fact]. This is mentioned in the context of [relevant context]."
+
+## For Analysis:
+"Based on the documents, [analysis]. This is supported by [evidence 1] and [evidence 2]. The key insight is [conclusion]."
+
+## For Summaries:
+"Here's a summary of [topic]:
+
+**Main Points:**
+- [Point 1]
+- [Point 2]
+- [Point 3]
+
+**Key Details:**
+[Elaboration with sources]"
+
+## For No Information:
+"I don't have information about [topic] in the uploaded documents. The documents focus on [what they do cover]. Would you like to know more about those areas?"
+
+# QUALITY CHECKS
+Before responding, verify:
+✓ Answer is grounded in document content
+✓ Sources are cited appropriately  
+✓ Response format matches query type
+✓ Language is clear and professional
+✓ All parts of question are addressed
+
+Current date: October 4, 2025
+
+Remember: You're not just a search engine - you're an intelligent assistant that understands context, reasons about information, and helps users gain insights from their documents."""
         
         print("✅ GraphRAG Service initialized with Memgraph")
         print(f"   - Knowledge Graph: Memgraph")
@@ -167,27 +295,120 @@ Remember: Be helpful, accurate, and transparent. Use the knowledge graph to prov
             
             # Detect greetings and simple messages that don't need RAG
             query_lower = query.lower().strip()
+            
+            # Basic greetings
             greeting_patterns = [
                 'hi', 'hello', 'hey', 'good morning', 'good afternoon', 
-                'good evening', 'greetings', 'howdy', 'sup', 'yo',
-                'thanks', 'thank you', 'ok', 'okay', 'bye', 'goodbye'
+                'good evening', 'greetings', 'howdy', 'sup', 'yo'
             ]
+            
+            # Acknowledgments and simple responses
+            acknowledgment_patterns = [
+                'thanks', 'thank you', 'ok', 'okay', 'alright', 'cool',
+                'got it', 'i see', 'understood', 'nice', 'great',
+                'bye', 'goodbye', 'see you', 'later'
+            ]
+            
+            # Identity/introduction statements
+            identity_patterns = [
+                'i am', "i'm", 'my name is', 'this is', 'im ', 'call me'
+            ]
+            
+            # Check if it's a simple introduction or identity statement (short statements only)
+            is_identity = any(pattern in query_lower for pattern in identity_patterns) and len(query.split()) <= 6
+            
+            # Check if it's a simple acknowledgment
+            is_acknowledgment = (
+                query_lower in acknowledgment_patterns or
+                (len(query.split()) <= 3 and any(pattern in query_lower for pattern in acknowledgment_patterns))
+            )
             
             # Check if query is just a greeting (exact match or very short)
             is_greeting = (
                 query_lower in greeting_patterns or 
-                len(query.split()) <= 2 and any(pattern in query_lower for pattern in greeting_patterns)
+                len(query.split()) <= 2 and any(pattern in query_lower for pattern in greeting_patterns) or
+                is_identity or
+                is_acknowledgment
             )
             
             if is_greeting:
                 print(f"   💬 Detected greeting/simple message, responding conversationally")
                 stats = self.graph.get_stats()
                 
+                # Handle acknowledgments differently
+                if is_acknowledgment:
+                    # Simple acknowledgments get simple responses
+                    acknowledgment_responses = [
+                        "You're welcome! Let me know if you have any questions about your documents. 😊",
+                        "Happy to help! Feel free to ask anything about your uploaded documents.",
+                        "Anytime! What would you like to know about your documents?",
+                        "Glad I could help! Any other questions?"
+                    ]
+                    import random
+                    return {
+                        "answer": random.choice(acknowledgment_responses),
+                        "citations": [],
+                        "sources": [],
+                        "entities": [],
+                        "query": query
+                    }
+                
+                # Extract name if it's an introduction
+                user_name = None
+                if is_identity:
+                    # Try to extract name from "I am [name]" or "My name is [name]"
+                    for pattern in ['i am ', "i'm ", 'my name is ', 'this is ', 'im ']:
+                        if pattern in query_lower:
+                            potential_name = query_lower.split(pattern)[-1].strip().split()[0]
+                            if potential_name and len(potential_name) > 1:
+                                user_name = potential_name.capitalize()
+                                break
+                
                 if stats['documents'] > 0:
                     doc_text = f"{stats['documents']} document{'s' if stats['documents'] > 1 else ''}"
-                    greeting_response = f"""Hello! 👋 I'm SupaQuery, your AI assistant for document analysis.
+                    
+                    # Get list of uploaded documents
+                    try:
+                        doc_list = self.graph.list_documents()
+                        
+                        doc_list_text = ""
+                        if doc_list and len(doc_list) > 0:
+                            # Remove duplicates by filename and get unique docs
+                            seen_filenames = set()
+                            unique_docs = []
+                            for doc in doc_list:
+                                filename = doc.get('filename', '')
+                                if filename and filename not in seen_filenames:
+                                    seen_filenames.add(filename)
+                                    unique_docs.append(doc)
+                            
+                            if unique_docs:
+                                doc_list_text = "\n\n**Your uploaded documents:**\n"
+                                for i, doc in enumerate(unique_docs[:5], 1):  # Show max 5 unique docs
+                                    doc_name = doc.get('filename', f'Document {i}')
+                                    # Truncate long filenames
+                                    if len(doc_name) > 50:
+                                        doc_name = doc_name[:47] + "..."
+                                    doc_list_text += f"{i}. 📄 {doc_name}\n"
+                                
+                                remaining = len(unique_docs) - 5
+                                if remaining > 0:
+                                    doc_list_text += f"   ...and {remaining} more\n"
+                                
+                                doc_list_text += "\n*Ask me anything about these documents!*"
+                    except Exception as e:
+                        doc_list_text = ""
+                        print(f"   ⚠️ Could not fetch document list: {e}")
+                    
+                    # Personalized greeting if name detected
+                    if user_name:
+                        greeting_start = f"Nice to meet you, {user_name}! 👋 I'm SupaQuery, your AI assistant."
+                    else:
+                        greeting_start = "Hello! 👋 I'm SupaQuery, your AI assistant for document analysis."
+                    
+                    greeting_response = f"""{greeting_start}
 
-I can see you have {doc_text} uploaded with {stats['entities']} entities extracted. I'm ready to help you analyze them!
+I can see you have {doc_text} uploaded with {stats['entities']} entities extracted. I'm ready to help you analyze them!{doc_list_text}
 
 **What I can do:**
 - Answer questions about your documents
@@ -203,7 +424,13 @@ I can see you have {doc_text} uploaded with {stats['entities']} entities extract
 
 How can I help you today?"""
                 else:
-                    greeting_response = """Hello! 👋 I'm SupaQuery, your AI assistant for document analysis.
+                    # Personalized greeting if name detected
+                    if user_name:
+                        greeting_start = f"Nice to meet you, {user_name}! 👋 I'm SupaQuery, your AI assistant."
+                    else:
+                        greeting_start = "Hello! 👋 I'm SupaQuery, your AI assistant for document analysis."
+                    
+                    greeting_response = f"""{greeting_start}
 
 I don't see any documents uploaded yet. Upload some documents using the upload button above, and I'll help you:
 - Extract and analyze content
@@ -232,6 +459,10 @@ Ready to get started? Upload a document to begin! 📄"""
                     "entities": [],
                     "query": query
                 }
+            
+            # Classify query type for intelligent handling
+            query_type = self._classify_query(query)
+            print(f"   🎯 Query type detected: {query_type}")
             
             # Query entities related to the query
             print(f"   🏷️  Searching for relevant entities...")
@@ -285,9 +516,22 @@ Ready to get started? Upload a document to begin! 📄"""
             
             print(f"   - Retrieved {len(chunks)} chunks, {len(relevant_entities)} entities")
             
-            # Generate answer with LLM
+            # Generate answer with LLM using query-type-aware prompting
             print(f"   🤖 Generating answer with Ollama...")
             from llama_index.core.llms import ChatMessage
+            
+            # Customize instruction based on query type
+            query_instructions = {
+                'summary': "Provide a comprehensive summary with main points in bullet format.",
+                'fact': "Provide a precise, factual answer. Be concise and cite the source.",
+                'entity': "List all relevant entities with their roles/descriptions. Use bullet points.",
+                'analysis': "Provide a detailed analytical answer explaining the reasoning and relationships.",
+                'comparison': "Compare and contrast the items clearly, highlighting key differences and similarities.",
+                'list': "Provide a structured list with clear bullet points or numbering.",
+                'overview': "Provide a clear, well-structured answer with relevant details."
+            }
+            
+            instruction = query_instructions.get(query_type, query_instructions['overview'])
             
             messages = [
                 ChatMessage(role="system", content=self.system_prompt),
@@ -296,7 +540,9 @@ Ready to get started? Upload a document to begin! 📄"""
 
 User Question: {query}
 
-Please provide a clear, accurate answer based on the context above.""")
+Instructions: {instruction}
+
+Please provide your answer based strictly on the context above.""")
             ]
             
             response_obj = Settings.llm.chat(messages)
@@ -324,6 +570,40 @@ Please provide a clear, accurate answer based on the context above.""")
                 "entities": [],
                 "query": query
             }
+    
+    def _classify_query(self, query: str) -> str:
+        """
+        Classify query type to optimize retrieval and response generation
+        Returns: 'fact', 'summary', 'analysis', 'comparison', 'list', 'entity', 'overview'
+        """
+        query_lower = query.lower()
+        
+        # Summary/Overview queries
+        if any(word in query_lower for word in ['summarize', 'summary', 'overview', 'about this', 'main topic', 'what is this']):
+            return 'summary'
+        
+        # Factual queries
+        if any(query_lower.startswith(word) for word in ['what is', 'what are', 'when', 'where', 'which', 'how many', 'how much']):
+            return 'fact'
+        
+        # Entity queries
+        if any(word in query_lower for word in ['who is', 'who are', 'who mentioned', 'list people', 'list organizations']):
+            return 'entity'
+        
+        # Analytical queries
+        if any(query_lower.startswith(word) for word in ['why', 'how does', 'how do', 'explain', 'analyze']):
+            return 'analysis'
+        
+        # Comparison queries
+        if any(word in query_lower for word in ['compare', 'difference between', 'vs', 'versus', 'contrast']):
+            return 'comparison'
+        
+        # List queries
+        if any(word in query_lower for word in ['list all', 'list the', 'what are all', 'enumerate']):
+            return 'list'
+        
+        # Default to overview for longer queries or general questions
+        return 'overview'
     
     async def list_documents(self) -> List[Dict[str, Any]]:
         """List all documents in the knowledge graph"""

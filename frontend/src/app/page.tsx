@@ -29,7 +29,8 @@ import {
   Loader2,
   Volume2,
   Menu,
-  UploadCloud
+  UploadCloud,
+  RefreshCw
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import ProtectedRoute from '@/components/ProtectedRoute'
@@ -95,7 +96,42 @@ export default function AIDashboard() {
     } else {
       setTheme('system')
     }
+    
+    // Fetch existing documents when component mounts
+    fetchDocuments()
   }, [])
+  
+  const fetchDocuments = async () => {
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+      if (!token) return;
+      
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/documents`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.documents) {
+          // Convert backend documents to frontend format
+          const existingFiles: UploadedFile[] = data.documents.map((doc: any) => ({
+            id: doc.id.toString(),
+            name: doc.filename,
+            type: getFileType(doc.filename),
+            size: doc.file_size || 0,
+            uploadProgress: 100, // Already uploaded
+            tags: [],
+            uploadedAt: new Date(doc.created_at)
+          }));
+          setUploadedFiles(existingFiles);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching documents:', error);
+    }
+  }
 
   useEffect(() => {
     if (!mounted) return
@@ -405,7 +441,18 @@ export default function AIDashboard() {
         >
           <div className="p-3 md:p-4 border-b border-border">
             <div className="flex items-center justify-between mb-3 md:mb-4">
-              <h2 className="text-base md:text-lg font-semibold">Data Ingestion</h2>
+              <div className="flex items-center space-x-2">
+                <h2 className="text-base md:text-lg font-semibold">Data Ingestion</h2>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={fetchDocuments}
+                  className="h-6 w-6 p-0"
+                  title="Refresh documents"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                </Button>
+              </div>
               <div className="flex items-center space-x-2">
                 <Sun className="h-3 w-3 md:h-4 md:w-4" />
                 <Switch
@@ -466,6 +513,13 @@ export default function AIDashboard() {
 
           {/* File List */}
           <ScrollArea className="flex-1 p-3 md:p-4">
+            {uploadedFiles.length > 0 && (
+              <div className="mb-3 pb-2 border-b border-border">
+                <p className="text-xs text-muted-foreground">
+                  {uploadedFiles.length} document{uploadedFiles.length !== 1 ? 's' : ''} available
+                </p>
+              </div>
+            )}
             <div className="space-y-2 md:space-y-3">
               <AnimatePresence>
                 {uploadedFiles.map((file) => (

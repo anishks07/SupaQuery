@@ -385,6 +385,43 @@ class MemgraphService:
             print(f"❌ Error deleting document: {e}")
             return False
     
+    def list_documents(self, limit: int = 20) -> List[Dict]:
+        """
+        List all documents in the graph
+        
+        Args:
+            limit: Maximum number of documents to return
+            
+        Returns:
+            List of document dictionaries with metadata
+        """
+        try:
+            result = self.db.execute_and_fetch("""
+                MATCH (d:Document)
+                OPTIONAL MATCH (d)-[:CONTAINS]->(c:Chunk)
+                WITH d, count(c) as chunk_count
+                RETURN d.id as id, d.filename as filename, d.type as type, 
+                       d.created_at as created_at, chunk_count
+                ORDER BY d.created_at DESC
+                LIMIT $limit
+            """, {"limit": limit})
+            
+            documents = []
+            for row in result:
+                documents.append({
+                    "id": row.get("id"),
+                    "filename": row.get("filename"),
+                    "type": row.get("type"),
+                    "created_at": row.get("created_at"),
+                    "chunk_count": row.get("chunk_count", 0)
+                })
+            
+            return documents
+            
+        except Exception as e:
+            print(f"❌ Error listing documents: {e}")
+            return []
+    
     def get_stats(self) -> Dict:
         """Get database statistics"""
         try:
