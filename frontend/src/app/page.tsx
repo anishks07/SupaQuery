@@ -434,12 +434,12 @@ export default function AIDashboard() {
 
         {/* Left Panel - Data Insertion (30% on desktop, overlay on mobile) */}
         <motion.div
-          className={`fixed md:relative w-full md:w-[30%] lg:w-[30%] h-full bg-background border-r border-border flex flex-col z-50 md:z-auto transform transition-transform duration-300 ease-in-out ${
+          className={`fixed md:relative w-full md:w-[30%] lg:w-[30%] h-screen bg-background border-r border-border flex flex-col z-50 md:z-auto transform transition-transform duration-300 ease-in-out ${
             showMobilePanel ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
           }`}
           initial={false}
         >
-          <div className="p-3 md:p-4 border-b border-border">
+          <div className="p-3 md:p-4 border-b border-border flex-shrink-0">
             <div className="flex items-center justify-between mb-3 md:mb-4">
               <div className="flex items-center space-x-2">
                 <h2 className="text-base md:text-lg font-semibold">Data Ingestion</h2>
@@ -512,90 +512,92 @@ export default function AIDashboard() {
           </div>
 
           {/* File List */}
-          <ScrollArea className="flex-1 p-3 md:p-4">
-            {uploadedFiles.length > 0 && (
-              <div className="mb-3 pb-2 border-b border-border">
-                <p className="text-xs text-muted-foreground">
-                  {uploadedFiles.length} document{uploadedFiles.length !== 1 ? 's' : ''} available
-                </p>
-              </div>
-            )}
-            <div className="space-y-2 md:space-y-3">
-              <AnimatePresence>
-                {uploadedFiles.map((file) => (
-                  <motion.div
-                    key={file.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ duration: 0.3 }}
-                  >
-                    <Card className="p-2 md:p-3">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center space-x-2 flex-1 min-w-0">
-                          {getFileIcon(file.type)}
-                          <span className="text-xs md:text-sm font-medium truncate">
-                            {file.name}
-                          </span>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeFile(file.id)}
-                          className="h-5 w-5 md:h-6 md:w-6 p-0"
-                        >
-                          <X className="h-3 w-3" />
-                        </Button>
-                      </div>
-                      
-                      <div className="text-xs text-muted-foreground mb-2">
-                        {formatFileSize(file.size)}
-                      </div>
-
-                      {file.uploadProgress < 100 && (
-                        <div className="mb-2">
-                          <Progress value={file.uploadProgress} className="h-1" />
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {Math.round(file.uploadProgress)}%
+          <div className="flex-1 overflow-hidden">
+            <ScrollArea className="h-full p-3 md:p-4">
+              {uploadedFiles.length > 0 && (
+                <div className="mb-3 pb-2 border-b border-border">
+                  <p className="text-xs text-muted-foreground">
+                    {uploadedFiles.length} document{uploadedFiles.length !== 1 ? 's' : ''} available
+                  </p>
+                </div>
+              )}
+              <div className="space-y-2 md:space-y-3">
+                <AnimatePresence>
+                  {uploadedFiles.map((file) => (
+                    <motion.div
+                      key={file.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <Card className="p-2 md:p-3">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center space-x-2 flex-1 min-w-0">
+                            {getFileIcon(file.type)}
+                            <span className="text-xs md:text-sm font-medium truncate">
+                              {file.name}
+                            </span>
                           </div>
-                        </div>
-                      )}
-
-                      {/* Tags */}
-                      <div className="flex flex-wrap gap-1 mb-2">
-                        {file.tags.map((tag, index) => (
-                          <Badge
-                            key={index}
-                            variant="secondary"
-                            className="text-xs cursor-pointer"
-                            onClick={() => removeTag(file.id, index)}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeFile(file.id)}
+                            className="h-5 w-5 md:h-6 md:w-6 p-0"
                           >
-                            {tag} ×
-                          </Badge>
-                        ))}
-                        <Input
-                          placeholder="Add tag..."
-                          className="h-5 md:h-6 text-xs px-2 py-1 w-16 md:w-20"
-                          onKeyPress={(e) => {
-                            if (e.key === 'Enter') {
-                              addTag(file.id, (e.target as HTMLInputElement).value)
-                              ;(e.target as HTMLInputElement).value = ''
-                            }
-                          }}
-                        />
-                      </div>
-                    </Card>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          </ScrollArea>
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                        
+                        <div className="text-xs text-muted-foreground mb-2">
+                          {formatFileSize(file.size)}
+                        </div>
+
+                        {file.uploadProgress < 100 && (
+                          <div className="mb-2">
+                            <Progress value={file.uploadProgress} className="h-1" />
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {Math.round(file.uploadProgress)}%
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Tags */}
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {file.tags.map((tag, index) => (
+                            <Badge
+                              key={index}
+                              variant="secondary"
+                              className="text-xs cursor-pointer"
+                              onClick={() => removeTag(file.id, index)}
+                            >
+                              {tag} ×
+                            </Badge>
+                          ))}
+                          <Input
+                            placeholder="Add tag..."
+                            className="h-5 md:h-6 text-xs px-2 py-1 w-16 md:w-20"
+                            onKeyPress={(e) => {
+                              if (e.key === 'Enter') {
+                                addTag(file.id, (e.target as HTMLInputElement).value)
+                                ;(e.target as HTMLInputElement).value = ''
+                              }
+                            }}
+                          />
+                        </div>
+                      </Card>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            </ScrollArea>
+          </div>
         </motion.div>
 
         {/* Right Panel - Chat Interface (70% on desktop, full on mobile) */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 h-screen">
           {/* Header */}
-          <div className="p-3 md:p-4 border-b border-border">
+          <div className="p-3 md:p-4 border-b border-border flex-shrink-0">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Button
@@ -635,8 +637,9 @@ export default function AIDashboard() {
           </div>
 
           {/* Messages */}
-          <ScrollArea className="flex-1 p-3 md:p-4">
-            <div className="space-y-3 md:space-y-4 max-w-4xl mx-auto">
+          <div className="flex-1 overflow-hidden">
+            <ScrollArea className="h-full p-3 md:p-4">
+              <div className="space-y-3 md:space-y-4 max-w-4xl mx-auto">
               <AnimatePresence>
                 {messages.map((message) => (
                   <motion.div
@@ -722,11 +725,12 @@ export default function AIDashboard() {
               )}
               
               <div ref={messagesEndRef} />
-            </div>
-          </ScrollArea>
+              </div>
+            </ScrollArea>
+          </div>
 
           {/* Input Area */}
-          <div className="p-3 md:p-4 border-t border-border">
+          <div className="p-3 md:p-4 border-t border-border flex-shrink-0">
             <div className="flex items-end space-x-2 max-w-4xl mx-auto">
               <div className="flex-1">
                 <Textarea
