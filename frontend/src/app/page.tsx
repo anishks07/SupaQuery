@@ -30,7 +30,8 @@ import {
   Volume2,
   Menu,
   UploadCloud,
-  RefreshCw
+  RefreshCw,
+  Trash2
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import ProtectedRoute from '@/components/ProtectedRoute'
@@ -274,8 +275,40 @@ export default function AIDashboard() {
     }, 300)
   }
 
-  const removeFile = (fileId: string) => {
-    setUploadedFiles(prev => prev.filter(file => file.id !== fileId))
+  const removeFile = async (fileId: string) => {
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+      if (!token) {
+        console.error('No auth token found');
+        return;
+      }
+      
+      // Confirm deletion
+      if (!confirm('Are you sure you want to delete this document? This action cannot be undone.')) {
+        return;
+      }
+      
+      // Call delete API
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/documents/${fileId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      if (response.ok) {
+        // Remove from UI
+        setUploadedFiles(prev => prev.filter(file => file.id !== fileId));
+        console.log('Document deleted successfully');
+      } else {
+        const data = await response.json();
+        console.error('Failed to delete document:', data);
+        alert('Failed to delete document: ' + (data.detail || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error deleting document:', error);
+      alert('Error deleting document');
+    }
   }
 
   const addTag = (fileId: string, tag: string) => {
@@ -543,9 +576,10 @@ export default function AIDashboard() {
                             variant="ghost"
                             size="sm"
                             onClick={() => removeFile(file.id)}
-                            className="h-5 w-5 md:h-6 md:w-6 p-0"
+                            className="h-5 w-5 md:h-6 md:w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
+                            title="Delete document"
                           >
-                            <X className="h-3 w-3" />
+                            <Trash2 className="h-3 w-3 md:h-4 md:w-4" />
                           </Button>
                         </div>
                         

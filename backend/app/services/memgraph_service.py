@@ -368,15 +368,35 @@ class MemgraphService:
             True if successful
         """
         try:
-            # Delete document and all connected nodes
+            # First, collect entities that will become orphaned
+            orphan_check = self.db.execute_and_fetch("""
+                MATCH (d:Document {id: $doc_id})-[:CONTAINS]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+                WITH e, COUNT(DISTINCT c) as chunk_refs
+                MATCH (e)<-[:MENTIONS]-(all_chunks:Chunk)
+                WITH e, chunk_refs, COUNT(DISTINCT all_chunks) as total_refs
+                WHERE total_refs = chunk_refs
+                RETURN COLLECT(DISTINCT e.name) as orphan_entities
+            """, {"doc_id": str(doc_id)})
+            
+            orphan_list = list(orphan_check)
+            orphan_entities = orphan_list[0].get('orphan_entities', []) if orphan_list else []
+            
+            # Delete the document and its chunks
             self.db.execute("""
                 MATCH (d:Document {id: $doc_id})
                 OPTIONAL MATCH (d)-[:CONTAINS]->(c:Chunk)
-                OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity)
-                WHERE NOT EXISTS((e)<-[:MENTIONS]-(:Chunk)<-[:CONTAINS]-(:Document))
-                    OR NOT EXISTS((e)<-[:MENTIONS]-(:Chunk))
-                DETACH DELETE d, c, e
+                DETACH DELETE d, c
             """, {"doc_id": str(doc_id)})
+            
+            # Delete orphaned entities (entities only referenced by this document's chunks)
+            if orphan_entities:
+                self.db.execute("""
+                    UNWIND $entities as entity_name
+                    MATCH (e:Entity {name: entity_name})
+                    WHERE NOT EXISTS((e)<-[:MENTIONS]-(:Chunk))
+                    DETACH DELETE e
+                """, {"entities": orphan_entities})
+                print(f"   - Deleted {len(orphan_entities)} orphaned entities")
             
             print(f"✅ Deleted document {doc_id} from graph")
             return True

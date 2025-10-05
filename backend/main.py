@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.services.document_processor import DocumentProcessor
-from app.services.graph_rag import GraphRAGService
+from app.services.graph_rag_v2 import GraphRAGService
 from app.models.schemas import ChatRequest, ChatResponse, FileInfo
 from app.database.postgres import db_service
 from app.database.models import User
