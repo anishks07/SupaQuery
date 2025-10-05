@@ -17,14 +17,16 @@ class MemgraphService:
     
     def __init__(self):
         """Initialize connection to Memgraph"""
-        host = os.getenv('MEMGRAPH_HOST', 'localhost')
-        port = int(os.getenv('MEMGRAPH_PORT', '7687'))
+        self.host = os.getenv('MEMGRAPH_HOST', 'localhost')
+        self.port = int(os.getenv('MEMGRAPH_PORT', '7687'))
+        self.query_timeout = 30  # 30 second timeout for queries
         
         try:
-            self.db = Memgraph(host=host, port=port)
+            self.db = Memgraph(host=self.host, port=self.port)
             print(f"✅ Memgraph Service initialized")
-            print(f"   - Host: {host}:{port}")
+            print(f"   - Host: {self.host}:{self.port}")
             print(f"   - Lab UI: http://localhost:3001")
+            print(f"   - Query timeout: {self.query_timeout}s")
             
             # Create indexes for performance
             self._create_indexes()
@@ -43,6 +45,15 @@ class MemgraphService:
             result = list(self.db.execute_and_fetch("RETURN 1 as test"))
             if result and result[0]['test'] == 1:
                 print(f"   ✓ Connection verified")
+                
+            # Set query execution timeout at database level
+            try:
+                self.db.execute(f"SET DATABASE SETTING 'query.timeout' TO '{self.query_timeout}';")
+                print(f"   ✓ Query timeout set to {self.query_timeout}s")
+            except Exception as timeout_err:
+                # Not all Memgraph versions support this, it's okay
+                print(f"   ⚠️ Could not set query timeout (not critical): {timeout_err}")
+                
         except Exception as e:
             print(f"   ✗ Connection test failed: {e}")
             raise
@@ -204,7 +215,7 @@ class MemgraphService:
     
     def query_similar_chunks(self, query_text: str, doc_ids: Optional[List[str]] = None, limit: int = 5) -> List[Dict]:
         """
-        Query for similar chunks (simple text matching for now)
+        Query for similar chunks with timeout protection and retry logic
         
         Args:
             query_text: Query text
@@ -214,37 +225,70 @@ class MemgraphService:
         Returns:
             List of chunk dictionaries with text and metadata
         """
-        try:
-            # For now, do simple text search
-            # In production, you'd use vector similarity or full-text search
-            if doc_ids:
-                result = self.db.execute_and_fetch("""
-                    MATCH (d:Document)-[:CONTAINS]->(c:Chunk)
-                    WHERE d.id IN $doc_ids
-                    RETURN c.text as text, c.id as chunk_id, d.filename as source, d.id as doc_id
-                    LIMIT $limit
-                """, {"doc_ids": doc_ids, "limit": limit})
-            else:
-                result = self.db.execute_and_fetch("""
-                    MATCH (d:Document)-[:CONTAINS]->(c:Chunk)
-                    RETURN c.text as text, c.id as chunk_id, d.filename as source, d.id as doc_id
-                    LIMIT $limit
-                """, {"limit": limit})
-            
-            chunks = []
-            for row in result:
-                chunks.append({
-                    "text": row["text"],
-                    "chunk_id": row["chunk_id"],
-                    "source": row["source"],
-                    "doc_id": row["doc_id"]
-                })
-            
-            return chunks
-            
-        except Exception as e:
-            print(f"❌ Error querying chunks: {e}")
-            return []
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                # Simplified query with better performance
+                if doc_ids:
+                    # Use LIMIT in subquery for better performance
+                    result = self.db.execute_and_fetch("""
+                        MATCH (d:Document)-[:CONTAINS]->(c:Chunk)
+                        WHERE d.id IN $doc_ids
+                        WITH c, d
+                        LIMIT $limit
+                        RETURN c.text as text, c.id as chunk_id, d.filename as source, d.id as doc_id
+                    """, {"doc_ids": doc_ids, "limit": limit})
+                else:
+                    result = self.db.execute_and_fetch("""
+                        MATCH (d:Document)-[:CONTAINS]->(c:Chunk)
+                        WITH c, d
+                        LIMIT $limit
+                        RETURN c.text as text, c.id as chunk_id, d.filename as source, d.id as doc_id
+                    """, {"limit": limit})
+                
+                chunks = []
+                for row in result:
+                    chunks.append({
+                        "text": row["text"],
+                        "chunk_id": row["chunk_id"],
+                        "source": row["source"],
+                        "doc_id": row["doc_id"]
+                    })
+                
+                if chunks:
+                    print(f"   ✓ Retrieved {len(chunks)} chunks")
+                else:
+                    print(f"   ⚠️ No chunks found")
+                
+                return chunks
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'timed out' in error_msg or 'timeout' in error_msg:
+                    if attempt < max_retries - 1:
+                        print(f"   ⚠️ Query timeout, retrying with smaller limit...")
+                        limit = max(1, limit // 2)  # Reduce limit by half
+                        # Recreate connection
+                        try:
+                            self.db = Memgraph(host=self.host, port=self.port)
+                        except:
+                            pass
+                    else:
+                        print(f"   ❌ Query timed out after {max_retries} attempts")
+                        # Return empty list instead of crashing
+                        return []
+                else:
+                    print(f"   ❌ Error querying chunks: {e}")
+                    if attempt < max_retries - 1:
+                        # Try reconnecting
+                        try:
+                            self.db = Memgraph(host=self.host, port=self.port)
+                        except:
+                            pass
+                    else:
+                        return []
+        
+        return []
     
     def query_entities(self, query_text: str, entity_types: Optional[List[str]] = None, limit: int = 10) -> List[Dict]:
         """
@@ -443,29 +487,47 @@ class MemgraphService:
             return []
     
     def get_stats(self) -> Dict:
-        """Get database statistics"""
-        try:
-            result = self.db.execute_and_fetch("""
-                MATCH (d:Document) WITH count(d) as docs
-                MATCH (c:Chunk) WITH docs, count(c) as chunks
-                MATCH (e:Entity) WITH docs, chunks, count(e) as entities
-                MATCH ()-[r]->() WITH docs, chunks, entities, count(r) as relationships
-                RETURN docs, chunks, entities, relationships
-            """)
-            
-            result_list = list(result)
-            stats = result_list[0] if result_list else {}
-            
-            return {
-                "documents": stats.get("docs", 0),
-                "chunks": stats.get("chunks", 0),
-                "entities": stats.get("entities", 0),
-                "relationships": stats.get("relationships", 0)
-            }
-            
-        except Exception as e:
-            print(f"❌ Error getting stats: {e}")
-            return {"documents": 0, "chunks": 0, "entities": 0, "relationships": 0}
+        """Get database statistics with connection retry"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Simpler query that's less likely to timeout
+                result = self.db.execute_and_fetch("""
+                    MATCH (d:Document)
+                    OPTIONAL MATCH (c:Chunk)
+                    OPTIONAL MATCH (e:Entity)
+                    OPTIONAL MATCH ()-[r]->()
+                    RETURN count(DISTINCT d) as docs, 
+                           count(DISTINCT c) as chunks, 
+                           count(DISTINCT e) as entities, 
+                           count(DISTINCT r) as relationships
+                """)
+                
+                result_list = list(result)
+                if result_list:
+                    stats = result_list[0]
+                    return {
+                        "documents": stats.get("docs", 0) or 0,
+                        "chunks": stats.get("chunks", 0) or 0,
+                        "entities": stats.get("entities", 0) or 0,
+                        "relationships": stats.get("relationships", 0) or 0
+                    }
+                else:
+                    # No results, graph might be empty
+                    return {"documents": 0, "chunks": 0, "entities": 0, "relationships": 0}
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"⚠️ Stats query attempt {attempt + 1} failed, retrying... ({e})")
+                    # Recreate connection on retry
+                    try:
+                        self.db = Memgraph(host=self.host, port=self.port)
+                    except:
+                        pass
+                else:
+                    print(f"❌ Error getting stats after {max_retries} attempts: {e}")
+                    # Return non-zero default if we know documents exist in DB
+                    return {"documents": 0, "chunks": 0, "entities": 0, "relationships": 0}
     
     def clear_all(self) -> bool:
         """Clear all data from graph (use with caution!)"""

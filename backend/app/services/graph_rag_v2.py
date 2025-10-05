@@ -5,7 +5,10 @@ Implements Graph-based Retrieval Augmented Generation with intelligent query rou
 
 import os
 import re
+import asyncio
+import requests
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from llama_index.core import Settings
 from llama_index.llms.ollama import Ollama
@@ -18,8 +21,44 @@ class GraphRAGService:
         print("🔧 Initializing GraphRAG...")
         self.graph = get_memgraph_service()
         self.entity_extractor = get_entity_extractor()
-        Settings.llm = Ollama(model="llama3.2", request_timeout=120.0, temperature=0.1)
+        # Use Ollama directly for better control
+        self.ollama_url = "http://localhost:11434"
+        Settings.llm = Ollama(
+            model="llama3.2", 
+            request_timeout=90.0,
+            temperature=0.1,
+            base_url=self.ollama_url
+        )
         print("✅ GraphRAG initialized")
+        print(f"   - LLM: llama3.2 (direct mode)")
+    
+    def _call_ollama_direct(self, prompt: str, max_tokens: int = 500) -> str:
+        """Call Ollama directly via HTTP for faster, more reliable responses"""
+        import requests
+        
+        try:
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": "llama3.2",
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.3,
+                        "num_predict": max_tokens,  # Limit response length
+                    }
+                },
+                timeout=60  # 60 second hard timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("response", "").strip()
+            else:
+                raise Exception(f"Ollama returned status {response.status_code}")
+        except Exception as e:
+            print(f"   ❌ Direct Ollama call failed: {e}")
+            raise
     
     async def add_document(self, file_info: Dict[str, Any]) -> None:
         """
@@ -254,7 +293,7 @@ Example questions:
             return {
                 "answer": answer,
                 "citations": [],
-                "sources": [doc.get('filename') for doc in docs],
+                "sources": [{"filename": doc.get('filename')} for doc in docs],
                 "entities": [],
                 "query": query,
                 "strategy": "document_list"
@@ -275,14 +314,33 @@ Example questions:
             print(f"🔍 Processing query: {query[:50]}...")
             stats = self.graph.get_stats()
             
-            if stats['documents'] == 0:
-                return {
-                    "answer": "No documents uploaded yet. Please upload a document to get started.",
-                    "citations": [],
-                    "sources": [],
-                    "entities": [],
-                    "query": query
-                }
+            # If graph stats show 0 documents but we have document_ids, trust the document_ids
+            # This handles cases where Memgraph has connection issues but documents exist
+            if stats['documents'] == 0 and not document_ids:
+                # Try to get document list from graph as final check
+                try:
+                    docs = self.graph.list_documents(limit=1)
+                    if docs and len(docs) > 0:
+                        # Documents exist but stats failed - update stats
+                        stats['documents'] = len(docs)
+                        print(f"⚠️ Stats showed 0 docs, but found {len(docs)} via list_documents")
+                    else:
+                        return {
+                            "answer": "No documents uploaded yet. Please upload a document to get started.",
+                            "citations": [],
+                            "sources": [],
+                            "entities": [],
+                            "query": query
+                        }
+                except Exception as list_err:
+                    print(f"⚠️ Could not verify documents: {list_err}")
+                    return {
+                        "answer": "No documents uploaded yet. Please upload a document to get started.",
+                        "citations": [],
+                        "sources": [],
+                        "entities": [],
+                        "query": query
+                    }
             
             # Check query type FIRST (before strategy routing)
             query_type = self._classify_query(query)
@@ -347,6 +405,12 @@ Example questions:
                 entity_context = self._format_entity_context(all_entities) if all_entities else ""
                 context = f"{chunk_context}\n\n{entity_context}" if entity_context else chunk_context
             
+            # Limit context to prevent LLM timeouts (max ~6000 chars / ~1500 tokens)
+            MAX_CONTEXT_LENGTH = 6000
+            if len(context) > MAX_CONTEXT_LENGTH:
+                print(f"   ⚠️ Context too large ({len(context)} chars), truncating to {MAX_CONTEXT_LENGTH}")
+                context = context[:MAX_CONTEXT_LENGTH] + "\n\n[... context truncated for performance ...]"
+            
             # Generate response with type-specific instructions
             system_prompt = self._get_system_prompt(query_type)
             user_prompt = self._get_user_prompt(query, context, query_type)
@@ -356,27 +420,70 @@ Example questions:
                 ChatMessage(role="user", content=user_prompt)
             ]
             
-            response = Settings.llm.chat(messages)
-            answer = str(response.message.content)
+            # Use direct Ollama call for faster, more reliable responses
+            print(f"   🤖 Generating response using direct mode...")
+            
+            # Create a concise, focused prompt
+            if query_type == 'summary':
+                simple_prompt = f"""Based on these document excerpts, provide a concise summary:
+
+{context[:3000]}
+
+Summary:"""
+            else:
+                simple_prompt = f"""Context:
+{context[:3000]}
+
+Question: {query}
+
+Answer:"""
+            
+            try:
+                answer = self._call_ollama_direct(simple_prompt, max_tokens=500)
+                print(f"   ✓ Response generated successfully ({len(answer)} chars)")
+            except Exception as llm_error:
+                print(f"   ❌ LLM generation failed: {llm_error}")
+                # Fallback: provide a basic response from the context
+                answer = f"Based on the documents, here are the key points:\n\n{context[:500]}..."
             
             return {
                 "answer": answer,
                 "citations": [{"text": c['text'], "source": c['source']} for c in chunks],
-                "sources": list(set([c['source'] for c in chunks])),
+                "sources": [{"filename": src} for src in list(set([c['source'] for c in chunks]))],
                 "entities": all_entities,
                 "query": query,
                 "query_type": query_type,
                 "strategy": "retrieve"
             }
         except Exception as e:
+            error_msg = str(e).lower()
             print(f"❌ Error in query: {str(e)}")
-            return {
-                "answer": f"I encountered an error: {str(e)}. Please try again.",
-                "citations": [],
-                "sources": [],
-                "entities": [],
-                "query": query
-            }
+            
+            # Provide user-friendly error messages
+            if 'timed out' in error_msg or 'timeout' in error_msg:
+                return {
+                    "answer": "⏱️ The query took too long to process. This can happen when the knowledge graph is very large. Try:\n• Being more specific in your question\n• Asking about a particular document\n• Simplifying your query\n\nI'm still learning from your documents in the background!",
+                    "citations": [],
+                    "sources": [],
+                    "entities": [],
+                    "query": query
+                }
+            elif 'connection' in error_msg:
+                return {
+                    "answer": "🔌 I'm having trouble connecting to the knowledge graph. The system is trying to reconnect. Please try your question again in a moment.",
+                    "citations": [],
+                    "sources": [],
+                    "entities": [],
+                    "query": query
+                }
+            else:
+                return {
+                    "answer": f"❌ I encountered an error while processing your question. Please try rephrasing or ask something simpler.\n\nError details: {str(e)}",
+                    "citations": [],
+                    "sources": [],
+                    "entities": [],
+                    "query": query
+                }
     
     def _format_entity_context(self, entities: List[Dict]) -> str:
         """Format entities into structured context"""

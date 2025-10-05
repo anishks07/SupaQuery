@@ -113,6 +113,13 @@ export default function AIDashboard() {
         },
       });
       
+      // Handle authentication errors
+      if (response.status === 401) {
+        localStorage.removeItem('auth_token')
+        window.location.href = '/login'
+        return
+      }
+      
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.documents) {
@@ -232,6 +239,13 @@ export default function AIDashboard() {
 
       const data = await response.json()
 
+      // Handle authentication errors
+      if (response.status === 401) {
+        localStorage.removeItem('auth_token')
+        window.location.href = '/login'
+        return
+      }
+
       if (response.ok) {
         // Update files with processed status
         newFiles.forEach(file => {
@@ -295,6 +309,13 @@ export default function AIDashboard() {
           'Authorization': `Bearer ${token}`,
         },
       });
+      
+      // Handle authentication errors
+      if (response.status === 401) {
+        localStorage.removeItem('auth_token')
+        window.location.href = '/login'
+        return
+      }
       
       if (response.ok) {
         // Remove from UI
@@ -369,6 +390,14 @@ export default function AIDashboard() {
       })
 
       const data = await response.json()
+
+      // Handle authentication errors
+      if (response.status === 401) {
+        // Token expired or invalid - redirect to login
+        localStorage.removeItem('auth_token')
+        window.location.href = '/login'
+        return
+      }
 
       if (response.ok && data.response) {
         const aiMessage: Message = {
