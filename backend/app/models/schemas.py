@@ -5,16 +5,18 @@ from datetime import datetime
 
 class ChatRequest(BaseModel):
     message: str
-    document_ids: Optional[List[str]] = None
+    document_ids: Optional[List[int]] = None  # Changed from str to int - frontend sends integers
     session_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
     success: bool
     response: str
-    citations: List[Dict[str, Any]]
+    citations: List[Dict[str, Any]]  # Enhanced with page numbers and timestamps
     sources: List[Dict[str, Any]]
     timestamp: str
+    evaluation: Optional[Dict[str, Any]] = None  # Quality scores from evaluation agent
+    strategy: Optional[str] = None  # Routing strategy used
 
 
 class FileInfo(BaseModel):

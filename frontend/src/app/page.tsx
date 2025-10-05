@@ -45,6 +45,7 @@ interface UploadedFile {
   uploadProgress: number
   tags: string[]
   uploadedAt: Date
+  selected?: boolean
 }
 
 interface Message {
@@ -53,10 +54,31 @@ interface Message {
   content: string
   timestamp: Date
   citations?: Array<{
-    title: string
-    url: string
-    snippet: string
+    text: string
+    source: string
+    doc_id?: string
+    chunk_id?: string
+    citation?: {
+      type: string
+      pages?: number[]
+      page_range?: string
+      start_time?: number
+      end_time?: number
+      timestamp?: string
+      timestamp_range?: string
+    }
   }>
+  sources?: Array<{
+    filename: string
+  }>
+  evaluation?: {
+    overall_score: number
+    quality_score: number
+    completeness_score: number
+    relevance_score: number
+    attempts: number
+  }
+  strategy?: string
 }
 
 function ThemeWrapper({ children }: { children: React.ReactNode }) {
@@ -353,6 +375,12 @@ export default function AIDashboard() {
     )
   }
 
+  const toggleFileSelection = (fileId: string) => {
+    setUploadedFiles(prev => prev.map(file => 
+      file.id === fileId ? { ...file, selected: !file.selected } : file
+    ))
+  }
+
   const sendMessage = async () => {
     if (!inputMessage.trim()) return
 
@@ -376,6 +404,12 @@ export default function AIDashboard() {
         throw new Error('Please log in to use chat');
       }
 
+      // Get selected document IDs
+      const selectedDocIds = uploadedFiles
+        .filter(file => file.selected && file.uploadProgress === 100)
+        .map(file => parseInt(file.id))
+        .filter(id => !isNaN(id))
+
       // Call the chat API
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/chat`, {
         method: 'POST',
@@ -385,7 +419,8 @@ export default function AIDashboard() {
         },
         body: JSON.stringify({
           message: currentInput,
-          session_id: null
+          session_id: null,
+          document_ids: selectedDocIds.length > 0 ? selectedDocIds : null
         }),
       })
 
@@ -405,7 +440,10 @@ export default function AIDashboard() {
           role: 'assistant',
           content: data.response,
           timestamp: new Date(),
-          citations: data.citations || []
+          citations: data.citations || [],
+          sources: data.sources || [],
+          evaluation: data.evaluation,
+          strategy: data.strategy
         }
         setMessages(prev => [...prev, aiMessage])
       } else {
@@ -596,6 +634,13 @@ export default function AIDashboard() {
                       <Card className="p-2 md:p-3">
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex items-center space-x-2 flex-1 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={file.selected || false}
+                              onChange={() => toggleFileSelection(file.id)}
+                              className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                              title="Select for chat context"
+                            />
                             {getFileIcon(file.type)}
                             <span className="text-xs md:text-sm font-medium truncate">
                               {file.name}
@@ -738,21 +783,67 @@ export default function AIDashboard() {
                           </p>
                         </Card>
                         
-                        {/* Citations */}
+                        {/* Citations with Page Numbers and Timestamps */}
                         {message.citations && message.citations.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {message.citations.map((citation, index) => (
-                              <div key={index} className="text-xs text-muted-foreground">
-                                <a 
-                                  href={citation.url} 
-                                  className="hover:text-primary underline"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  [{index + 1}] {citation.title}
-                                </a>
-                              </div>
-                            ))}
+                          <div className="mt-3 space-y-2 border-t pt-2">
+                            <div className="text-xs font-semibold text-muted-foreground flex items-center gap-1">
+                              <FileText className="h-3 w-3" />
+                              Sources & Citations
+                            </div>
+                            <div className="space-y-1.5">
+                              {message.citations.slice(0, 3).map((citation, index) => (
+                                <div key={index} className="text-xs bg-muted/50 p-2 rounded border border-border">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-medium text-foreground flex items-center gap-1.5">
+                                        <span className="text-primary">[{index + 1}]</span>
+                                        <span className="truncate">{citation.source}</span>
+                                      </div>
+                                      
+                                      {/* Page number for PDFs */}
+                                      {citation.citation?.type === 'pdf' && citation.citation.page_range && (
+                                        <div className="text-muted-foreground mt-0.5 flex items-center gap-1">
+                                          <FileText className="h-3 w-3" />
+                                          <span>{citation.citation.page_range}</span>
+                                        </div>
+                                      )}
+                                      
+                                      {/* Timestamp for audio files */}
+                                      {citation.citation?.type === 'audio' && citation.citation.timestamp_range && (
+                                        <div className="text-muted-foreground mt-0.5 flex items-center gap-1">
+                                          <Volume2 className="h-3 w-3" />
+                                          <span>🕐 {citation.citation.timestamp_range}</span>
+                                        </div>
+                                      )}
+                                      
+                                      {/* Preview text */}
+                                      {citation.text && (
+                                        <div className="text-muted-foreground mt-1 text-[11px] line-clamp-2">
+                                          &quot;{citation.text.substring(0, 120)}...&quot;
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                              {message.citations.length > 3 && (
+                                <div className="text-xs text-muted-foreground text-center">
+                                  + {message.citations.length - 3} more citations
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Evaluation Scores (if available) */}
+                        {message.evaluation && (
+                          <div className="mt-2 text-xs text-muted-foreground flex items-center gap-3">
+                            <span className="flex items-center gap-1">
+                              ✨ Quality: {(message.evaluation.overall_score * 100).toFixed(0)}%
+                            </span>
+                            {message.evaluation.attempts > 1 && (
+                              <span>🔄 Refined {message.evaluation.attempts}x</span>
+                            )}
                           </div>
                         )}
                         
@@ -794,6 +885,26 @@ export default function AIDashboard() {
 
           {/* Input Area */}
           <div className="p-3 md:p-4 border-t border-border flex-shrink-0">
+            {/* Selected Documents Indicator */}
+            {uploadedFiles.filter(f => f.selected).length > 0 && (
+              <div className="mb-2 max-w-4xl mx-auto">
+                <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                  <span>📎 Chatting with:</span>
+                  {uploadedFiles.filter(f => f.selected).map(file => (
+                    <Badge key={file.id} variant="secondary" className="text-xs">
+                      {file.name}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {uploadedFiles.length > 0 && uploadedFiles.filter(f => f.selected).length === 0 && (
+              <div className="mb-2 max-w-4xl mx-auto">
+                <div className="text-xs text-muted-foreground">
+                  💡 Tip: Check documents on the left to ask questions about specific files
+                </div>
+              </div>
+            )}
             <div className="flex items-end space-x-2 max-w-4xl mx-auto">
               <div className="flex-1">
                 <Textarea

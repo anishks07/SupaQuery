@@ -17,6 +17,7 @@ load_dotenv()
 
 from app.services.document_processor import DocumentProcessor
 from app.services.graph_rag_v2 import GraphRAGService
+from app.services.graph_rag_enhanced import get_enhanced_graph_rag_service
 from app.models.schemas import ChatRequest, ChatResponse, FileInfo
 from app.database.postgres import db_service
 from app.database.models import User
@@ -58,7 +59,16 @@ app.add_middleware(
 
 # Initialize services
 document_processor = DocumentProcessor()
-graph_rag_service = GraphRAGService()
+
+# Try to use enhanced GraphRAG service, fallback to original if it fails
+try:
+    from app.services.graph_rag_enhanced import get_enhanced_graph_rag_service
+    graph_rag_service = get_enhanced_graph_rag_service()
+    print("✅ Using Enhanced GraphRAG Service")
+except Exception as e:
+    print(f"⚠️  Enhanced GraphRAG failed to initialize: {e}")
+    print("   Falling back to standard GraphRAG service")
+    graph_rag_service = GraphRAGService()
 
 # Ensure upload directories exist
 UPLOAD_DIR = Path("uploads")
@@ -597,21 +607,59 @@ async def chat(
             document_ids=request.document_ids or []
         )
         
-        # Verify user has access to requested documents
+        # Verify user has access to requested documents and get file_ids
+        file_ids = None
         if request.document_ids:
+            print(f"   🔍 Converting {len(request.document_ids)} database IDs to file_ids...")
+            file_ids = []
             for doc_id in request.document_ids:
-                doc = await db_service.get_document(doc_id, current_user.id)
-                if not doc:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Access denied to document {doc_id}"
-                    )
+                try:
+                    doc = await db_service.get_document(doc_id, current_user.id)
+                    if not doc:
+                        print(f"   ❌ Access denied to document {doc_id}")
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Access denied to document {doc_id}"
+                        )
+                    # Extract file_id from filename (remove extension)
+                    # filename format: "35572985-490b-43e2-93fa-7aebe1e05a8d.pdf"
+                    file_id = doc.filename.rsplit('.', 1)[0]
+                    file_ids.append(file_id)
+                    print(f"   ✓ Document {doc_id} ({doc.original_filename}) -> file_id: {file_id}")
+                except Exception as e:
+                    print(f"   ❌ Error getting document {doc_id}: {e}")
+                    raise
         
-        # Query the GraphRAG system
-        response = await graph_rag_service.query(
-            query=request.message,
-            document_ids=request.document_ids
-        )
+        # Get conversation history for context-aware multi-query generation
+        conversation_history = []
+        if existing_session:
+            recent_messages = await db_service.get_chat_history(session_id, current_user.id, limit=5)
+            conversation_history = [
+                {"role": msg.role, "content": msg.content}
+                for msg in recent_messages
+            ]
+        
+        # Query the GraphRAG system (enhanced or standard)
+        # Use file_ids instead of document_ids for Memgraph queries
+        # Try with conversation_history first (enhanced service), fallback without it (standard service)
+        try:
+            response = await graph_rag_service.query(
+                query=request.message,
+                document_ids=file_ids,  # Pass file_ids, not database IDs
+                conversation_history=conversation_history
+            )
+        except TypeError:
+            # Fallback for services that don't support conversation_history
+            response = await graph_rag_service.query(
+                query=request.message,
+                document_ids=file_ids  # Pass file_ids, not database IDs
+            )
+        
+        # Debug: Log response structure
+        print(f"   Response keys: {response.keys()}")
+        print(f"   Answer length: {len(response.get('answer', ''))}")
+        print(f"   Citations count: {len(response.get('citations', []))}")
+        print(f"   Sources count: {len(response.get('sources', []))}")
         
         # Save assistant response
         await db_service.create_message(
@@ -624,18 +672,31 @@ async def chat(
             document_ids=request.document_ids or []
         )
         
-        return ChatResponse(
-            success=True,
-            response=response["answer"],
-            citations=response.get("citations", []),
-            sources=response.get("sources", []),
-            timestamp=datetime.now().isoformat()
-        )
+        # Build response carefully, ensuring all fields are properly formatted
+        try:
+            chat_response = ChatResponse(
+                success=True,
+                response=str(response.get("answer", "")),
+                citations=response.get("citations", []),
+                sources=response.get("sources", []),
+                timestamp=datetime.now().isoformat(),
+                evaluation=response.get("evaluation"),
+                strategy=response.get("strategy")
+            )
+            
+            print(f"   ✓ Chat response created successfully")
+            return chat_response
+        except Exception as validation_error:
+            print(f"   ❌ Response validation error: {validation_error}")
+            print(f"   Response data: {response}")
+            raise
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Chat error: {str(e)}")
+        print(f"❌ Chat error: {str(e)}")
+        import traceback
+        print(f"   Traceback: {traceback.format_exc()}")
         return ChatResponse(
             success=False,
             response=f"Error processing query: {str(e)}",
