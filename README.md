@@ -126,7 +126,7 @@ chmod +x setup.sh
 
 * **LLM Models:** LLaMA 7B (4-bit quantized), MPT-7B, Dia / OpenLLaMA 3B
 
-```bash* **Embeddings:** `all-MiniLM-L6-v2` (text), CLIP ViT-B/32 (image)```
+```bash* ```**Embeddings:** `all-MiniLM-L6-v2` (text), CLIP ViT-B/32 (image)
 
 # Clone the repository* **Speech-to-Text:** Whisper Tiny (audio)
 
