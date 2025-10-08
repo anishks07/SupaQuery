@@ -442,7 +442,7 @@ async def upload_files(
                 uploaded_files.append({
                     "id": document.id,
                     "file_id": file_id,
-                    "name": file.filename,
+                    "name": document.original_filename,  # Use from database, not from file object
                     "type": file_info.get("type"),
                     "size": file_size,
                     "status": "processed",
@@ -451,7 +451,9 @@ async def upload_files(
                 })
                 
             except Exception as e:
+                import traceback
                 print(f"Error processing {file.filename}: {str(e)}")
+                print(f"Traceback: {traceback.format_exc()}")
                 uploaded_files.append({
                     "id": file_id,
                     "name": file.filename,
@@ -519,18 +521,25 @@ async def delete_document(
         # Check document ownership
         await check_document_access(current_user, document_id, action='delete')
         
+        # Get document info before deletion (to retrieve file path)
+        document = await db_service.get_document(document_id, current_user.id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found or access denied")
+        
+        file_path = document.file_path
+        
         # Delete from database (cascades to chunks)
         success = await db_service.delete_document(document_id, current_user.id)
         
         if not success:
             raise HTTPException(status_code=404, detail="Document not found or access denied")
         
-        # Remove from GraphRAG
-        await graph_rag_service.delete_document(str(document_id))
+        # Remove from GraphRAG and delete physical file
+        await graph_rag_service.delete_document(str(document_id), file_path=file_path)
         
         return {
             "success": True,
-            "message": f"Document {document_id} deleted"
+            "message": f"Document {document_id} deleted successfully"
         }
     except HTTPException:
         raise

@@ -44,7 +44,7 @@ interface UploadedFile {
   size: number
   uploadProgress: number
   tags: string[]
-  uploadedAt: Date
+  uploadedAt: string
   selected?: boolean
 }
 
@@ -52,7 +52,7 @@ interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
-  timestamp: Date
+  timestamp: string
   citations?: Array<{
     text: string
     source: string
@@ -153,7 +153,8 @@ export default function AIDashboard() {
             size: doc.file_size || 0,
             uploadProgress: 100, // Already uploaded
             tags: [],
-            uploadedAt: new Date(doc.created_at)
+            uploadedAt: doc.created_at,
+            selected: false  // Existing files start unselected
           }));
           setUploadedFiles(existingFiles);
         }
@@ -232,7 +233,8 @@ export default function AIDashboard() {
       size: file.size,
       uploadProgress: 0,
       tags: [],
-      uploadedAt: new Date()
+      uploadedAt: new Date().toISOString(),
+      selected: true  // Auto-select newly uploaded files
     }))
 
     setUploadedFiles(prev => [...prev, ...newFiles])
@@ -388,7 +390,7 @@ export default function AIDashboard() {
       id: Math.random().toString(36).substr(2, 9),
       role: 'user',
       content: inputMessage,
-      timestamp: new Date()
+      timestamp: new Date().toISOString()
     }
 
     setMessages(prev => [...prev, userMessage])
@@ -439,7 +441,7 @@ export default function AIDashboard() {
           id: Math.random().toString(36).substr(2, 9),
           role: 'assistant',
           content: data.response,
-          timestamp: new Date(),
+          timestamp: new Date().toISOString(),
           citations: data.citations || [],
           sources: data.sources || [],
           evaluation: data.evaluation,
@@ -456,7 +458,7 @@ export default function AIDashboard() {
         id: Math.random().toString(36).substr(2, 9),
         role: 'assistant',
         content: `I apologize, but I encountered an error while processing your request. Please try again later. Your question was: "${currentInput}"`,
-        timestamp: new Date()
+        timestamp: new Date().toISOString()
       }
       setMessages(prev => [...prev, aiMessage])
     } finally {
@@ -518,7 +520,7 @@ export default function AIDashboard() {
   return (
     <ProtectedRoute>
       <ThemeWrapper>
-        <div className="flex h-screen bg-background">
+        <div className="flex h-screen bg-background overflow-hidden">
         {/* Mobile Panel Overlay */}
         <AnimatePresence>
           {showMobilePanel && (
@@ -534,15 +536,15 @@ export default function AIDashboard() {
 
         {/* Left Panel - Data Insertion (30% on desktop, overlay on mobile) */}
         <motion.div
-          className={`fixed md:relative w-full md:w-[30%] lg:w-[30%] h-screen bg-background border-r border-border flex flex-col z-50 md:z-auto transform transition-transform duration-300 ease-in-out ${
+          className={`fixed md:relative w-full md:w-[30%] h-screen bg-background border-r border-border flex flex-col overflow-hidden z-50 md:z-auto transform transition-transform duration-300 ease-in-out ${
             showMobilePanel ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
           }`}
           initial={false}
         >
           <div className="p-3 md:p-4 border-b border-border flex-shrink-0">
-            <div className="flex items-center justify-between mb-3 md:mb-4">
-              <div className="flex items-center space-x-2">
-                <h2 className="text-base md:text-lg font-semibold">Data Ingestion</h2>
+            <div className="flex items-center justify-between mb-3 md:mb-4 min-w-0">
+              <div className="flex items-center space-x-2 min-w-0">
+                <h2 className="text-base md:text-lg font-semibold truncate">Data Ingestion</h2>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -612,8 +614,8 @@ export default function AIDashboard() {
           </div>
 
           {/* File List */}
-          <div className="flex-1 overflow-hidden">
-            <ScrollArea className="h-full p-3 md:p-4">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden">
+            <div className="p-3 md:p-4">
               {uploadedFiles.length > 0 && (
                 <div className="mb-3 pb-2 border-b border-border">
                   <p className="text-xs text-muted-foreground">
@@ -621,7 +623,8 @@ export default function AIDashboard() {
                   </p>
                 </div>
               )}
-              <div className="space-y-2 md:space-y-3">
+              
+              <div className="space-y-3 pb-20">
                 <AnimatePresence>
                   {uploadedFiles.map((file) => (
                     <motion.div
@@ -631,52 +634,53 @@ export default function AIDashboard() {
                       exit={{ opacity: 0, y: -20 }}
                       transition={{ duration: 0.3 }}
                     >
-                      <Card className="p-2 md:p-3">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex items-center space-x-2 flex-1 min-w-0">
-                            <input
-                              type="checkbox"
-                              checked={file.selected || false}
-                              onChange={() => toggleFileSelection(file.id)}
-                              className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
-                              title="Select for chat context"
-                            />
+                      <Card className="p-3">
+                        {/* Header Row: Checkbox, Icon, Name, Delete */}
+                        <div className="flex items-start gap-2 mb-2">
+                          <input
+                            type="checkbox"
+                            checked={file.selected || false}
+                            onChange={() => toggleFileSelection(file.id)}
+                            className="h-4 w-4 mt-0.5 flex-shrink-0 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                            title="Select for chat context"
+                          />
+                          <div className="flex-shrink-0">
                             {getFileIcon(file.type)}
-                            <span className="text-xs md:text-sm font-medium truncate">
-                              {file.name}
-                            </span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{file.name}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {formatFileSize(file.size)}
+                            </p>
                           </div>
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => removeFile(file.id)}
-                            className="h-5 w-5 md:h-6 md:w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
+                            className="h-8 w-8 p-0 flex-shrink-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
                             title="Delete document"
                           >
-                            <Trash2 className="h-3 w-3 md:h-4 md:w-4" />
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
-                        
-                        <div className="text-xs text-muted-foreground mb-2">
-                          {formatFileSize(file.size)}
-                        </div>
 
+                        {/* Upload Progress */}
                         {file.uploadProgress < 100 && (
                           <div className="mb-2">
-                            <Progress value={file.uploadProgress} className="h-1" />
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {Math.round(file.uploadProgress)}%
-                            </div>
+                            <Progress value={file.uploadProgress} className="h-1.5" />
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Uploading: {Math.round(file.uploadProgress)}%
+                            </p>
                           </div>
                         )}
 
-                        {/* Tags */}
-                        <div className="flex flex-wrap gap-1 mb-2">
+                        {/* Tags Section */}
+                        <div className="flex flex-wrap gap-1.5">
                           {file.tags.map((tag, index) => (
                             <Badge
                               key={index}
                               variant="secondary"
-                              className="text-xs cursor-pointer"
+                              className="text-xs cursor-pointer hover:bg-secondary/80"
                               onClick={() => removeTag(file.id, index)}
                             >
                               {tag} ×
@@ -684,11 +688,14 @@ export default function AIDashboard() {
                           ))}
                           <Input
                             placeholder="Add tag..."
-                            className="h-5 md:h-6 text-xs px-2 py-1 w-16 md:w-20"
+                            className="h-6 text-xs px-2 w-20 flex-shrink-0"
                             onKeyPress={(e) => {
                               if (e.key === 'Enter') {
-                                addTag(file.id, (e.target as HTMLInputElement).value)
-                                ;(e.target as HTMLInputElement).value = ''
+                                const input = e.target as HTMLInputElement
+                                if (input.value.trim()) {
+                                  addTag(file.id, input.value.trim())
+                                  input.value = ''
+                                }
                               }
                             }}
                           />
@@ -698,7 +705,7 @@ export default function AIDashboard() {
                   ))}
                 </AnimatePresence>
               </div>
-            </ScrollArea>
+            </div>
           </div>
         </motion.div>
 
@@ -810,9 +817,19 @@ export default function AIDashboard() {
                                       
                                       {/* Timestamp for audio files */}
                                       {citation.citation?.type === 'audio' && citation.citation.timestamp_range && (
-                                        <div className="text-muted-foreground mt-0.5 flex items-center gap-1">
-                                          <Volume2 className="h-3 w-3" />
-                                          <span>🕐 {citation.citation.timestamp_range}</span>
+                                        <div className="mt-1 flex items-center gap-2">
+                                          <button
+                                            onClick={() => {
+                                              // TODO: Implement audio player with timestamp
+                                              if (citation.citation) {
+                                                alert(`Play audio at ${citation.citation.timestamp_range}`)
+                                              }
+                                            }}
+                                            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 hover:bg-primary/20 transition-colors text-xs"
+                                          >
+                                            <Volume2 className="h-3 w-3" />
+                                            <span className="font-mono">🕐 {citation.citation.timestamp_range}</span>
+                                          </button>
                                         </div>
                                       )}
                                       
@@ -848,7 +865,7 @@ export default function AIDashboard() {
                         )}
                         
                         <div className="text-xs text-muted-foreground mt-1">
-                          {message.timestamp.toLocaleTimeString()}
+                          {new Date(message.timestamp).toLocaleTimeString()}
                         </div>
                       </div>
                     </div>

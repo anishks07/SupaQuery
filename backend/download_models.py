@@ -13,8 +13,8 @@ def download_whisper_model():
     print("📥 Downloading Whisper model...")
     try:
         import whisper
-        model = whisper.load_model("base")
-        print("✅ Whisper base model downloaded")
+        model = whisper.load_model("tiny")
+        print("✅ Whisper tiny model downloaded")
         return True
     except Exception as e:
         print(f"❌ Error downloading Whisper: {e}")
@@ -26,8 +26,9 @@ def download_embedding_model():
     print("📥 Downloading embedding model...")
     try:
         from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-        print("✅ Embedding model downloaded")
+        # Use model name without prefix for proper caching
+        model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+        print("✅ Embedding model downloaded and cached locally")
         return True
     except Exception as e:
         print(f"❌ Error downloading embedding model: {e}")

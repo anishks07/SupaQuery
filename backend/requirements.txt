@@ -13,7 +13,7 @@ llama-index-llms-ollama
 llama-index-embeddings-huggingface
 
 # Document processing
-pypdf
+PyMuPDF
 python-docx
 pillow
 pytesseract
@@ -26,6 +26,10 @@ torchaudio
 # Image embeddings
 transformers
 sentence-transformers
+
+# Vector search and reranking
+faiss-cpu
+rank-bm25
 
 # Knowledge Graph (Memgraph)
 gqlalchemy>=1.4.0

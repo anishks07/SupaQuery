@@ -14,6 +14,7 @@ from llama_index.core import Settings
 from llama_index.llms.ollama import Ollama
 from llama_index.core.llms import ChatMessage
 from app.services.memgraph_service import get_memgraph_service
+from app.services.graph_rag_v2 import GraphRAGService as HybridGraphRAG  # NEW: Hybrid FAISS+BM25+Memgraph
 from app.services.entity_extractor import get_entity_extractor
 from app.services.multi_query_generator import get_multi_query_generator
 from app.services.evaluation_agent import get_evaluation_agent
@@ -32,6 +33,7 @@ class EnhancedGraphRAGService:
     def __init__(self):
         print("🔧 Initializing Enhanced GraphRAG with Multi-Query and Evaluation...")
         self.graph = get_memgraph_service()
+        self.hybrid_rag = HybridGraphRAG()  # NEW: Hybrid retrieval system (FAISS+BM25+Memgraph)
         self.entity_extractor = get_entity_extractor()
         self.multi_query_generator = get_multi_query_generator()
         self.evaluation_agent = get_evaluation_agent()
@@ -109,7 +111,14 @@ class EnhancedGraphRAGService:
             return self._handle_clarification(query, stats)
         
         # STEP 3: Multi-Query Generation (for retrieval strategy)
-        if self.enable_multi_query:
+        # Skip multi-query for simple, direct questions to improve efficiency
+        simple_question_patterns = [
+            'what is', 'what are', 'how many', 'list', 'define', 'who is', 'when',
+            'where', 'which', 'give me', 'show me', 'tell me'
+        ]
+        is_simple_query = any(query.lower().startswith(pattern) for pattern in simple_question_patterns)
+        
+        if self.enable_multi_query and not is_simple_query:
             queries = self.multi_query_generator.generate_with_context(
                 original_query=query,
                 conversation_history=conversation_history,
@@ -117,6 +126,8 @@ class EnhancedGraphRAGService:
             )
         else:
             queries = [query]
+            if is_simple_query:
+                print(f"   ⚡ Skipping multi-query for direct question")
         
         # STEP 4: Retrieval with Evaluation Feedback Loop
         retry_count = 0
@@ -198,25 +209,77 @@ class EnhancedGraphRAGService:
         Retrieve information using multiple query variations and merge results.
         """
         
-        print(f"🔎 Retrieving with {len(queries)} queries...")
+        print(f"🔎 Retrieving with {len(queries)} queries using HYBRID SYSTEM...")
         
         all_chunks = []
         seen_chunk_ids = set()
         
-        # Retrieve chunks for each query variation
-        for i, q in enumerate(queries):
-            print(f"   Query {i+1}: {q[:60]}...")
-            
-            chunks = self.graph.query_similar_chunks(q, doc_ids=document_ids, limit=top_k)
-            
-            # Deduplicate chunks
-            for chunk in chunks:
-                chunk_id = chunk.get('id', chunk.get('text', '')[:50])
-                if chunk_id not in seen_chunk_ids:
-                    seen_chunk_ids.add(chunk_id)
-                    all_chunks.append(chunk)
+        # Use the hybrid retrieval system (FAISS + Memgraph + BM25) for the primary query
+        # This replaces the old Memgraph-only retrieval
+        primary_query = queries[0]
+        print(f"\n🔍 Combined Hybrid Retrieval Pipeline (Primary Query):")
         
-        print(f"   Retrieved {len(all_chunks)} unique chunks")
+        # STAGE 1: FAISS semantic retrieval (top 20 candidates)
+        print(f"   📊 Stage 1: FAISS semantic search...")
+        faiss_chunks = []
+        try:
+            faiss_chunks = self.hybrid_rag.faiss.search(primary_query, top_k=20, doc_ids=document_ids)
+            print(f"   ✓ FAISS retrieved {len(faiss_chunks)} chunks")
+        except Exception as e:
+            print(f"   ⚠️ FAISS error: {e}")
+        
+        # STAGE 2: Memgraph relational retrieval (related nodes/chunks)
+        print(f"   🕸️ Stage 2: Memgraph graph traversal...")
+        memgraph_chunks = []
+        try:
+            memgraph_chunks = self.hybrid_rag._retrieve_with_graph_traversal(
+                query=primary_query,
+                doc_ids=document_ids,
+                max_depth=2,
+                max_nodes=15
+            )
+            print(f"   ✓ Memgraph retrieved {len(memgraph_chunks)} chunks")
+        except Exception as e:
+            print(f"   ⚠️ Memgraph error: {e}")
+        
+        # STAGE 3: Merge and deduplicate
+        print(f"   🔀 Stage 3: Merging and deduplicating...")
+        merged_chunks = self.hybrid_rag._merge_and_deduplicate(faiss_chunks, memgraph_chunks)
+        print(f"   ✓ Merged to {len(merged_chunks)} unique chunks")
+        
+        # STAGE 3.5: SMART DOCUMENT FILTERING
+        # Extract named entities from query and match to document filenames
+        # This ensures queries about specific people/documents return relevant chunks
+        filtered_chunks = self._apply_smart_document_filter(primary_query, merged_chunks)
+        if filtered_chunks and len(filtered_chunks) < len(merged_chunks):
+            print(f"   🎯 Smart Filter: Filtered to {len(filtered_chunks)} relevant chunks based on query entities")
+            merged_chunks = filtered_chunks
+        
+        # STAGE 4: BM25 reranking on (filtered) merged results
+        if merged_chunks:
+            print(f"   🎯 Stage 4: BM25 reranking...")
+            all_chunks = self.hybrid_rag.faiss.rerank(primary_query, merged_chunks, top_k=top_k * 2)
+            print(f"   ✓ Reranked to top {len(all_chunks)} chunks")
+        else:
+            all_chunks = []
+        
+        # Optionally retrieve additional chunks for other query variations using Memgraph
+        if len(queries) > 1 and len(all_chunks) < top_k * 2:
+            print(f"   📝 Retrieving additional chunks from query variations...")
+            for i, q in enumerate(queries[1:], start=2):
+                if len(all_chunks) >= top_k * 2:
+                    break
+                print(f"      Query {i}: {q[:60]}...")
+                chunks = self.graph.query_similar_chunks(q, doc_ids=document_ids, limit=top_k)
+                
+                # Deduplicate
+                for chunk in chunks:
+                    chunk_id = chunk.get('id', chunk.get('text', '')[:50])
+                    if chunk_id not in seen_chunk_ids:
+                        seen_chunk_ids.add(chunk_id)
+                        all_chunks.append(chunk)
+        
+        print(f"   ✅ Total retrieved: {len(all_chunks)} unique chunks")
         
         if not all_chunks:
             return {
@@ -302,8 +365,8 @@ class EnhancedGraphRAGService:
         else:
             context = f"{chunk_context}\n\n{entity_context}" if entity_context else chunk_context
         
-        # Limit context length
-        MAX_CONTEXT_LENGTH = 6000
+        # Limit context length (increased for better performance)
+        MAX_CONTEXT_LENGTH = 12000
         if len(context) > MAX_CONTEXT_LENGTH:
             print(f"   ⚠️ Context truncated from {len(context)} to {MAX_CONTEXT_LENGTH} chars")
             context = context[:MAX_CONTEXT_LENGTH] + "\n\n[... truncated ...]"
@@ -315,18 +378,25 @@ class EnhancedGraphRAGService:
         
         print(f"   🤖 Generating answer...")
         
-        # Create focused prompt
+        # Use more context for better answers (increased from 3000 to 8000)
+        max_context_chars = 8000
+        
+        # Create focused prompt with emphasis on timestamps for audio
         if query_type == 'summary':
-            prompt = f"""Based on these document excerpts, provide a concise summary:
+            prompt = f"""Based on these document excerpts, provide a concise summary.
 
-{context[:3000]}
+IMPORTANT: If the source is an audio file (.wav), include specific timestamps in your answer (e.g., "At 0:30, ..." or "Between 1:15-2:00, ...").
+
+{context[:max_context_chars]}
 
 Summary:"""
         else:
             prompt = f"""Context from documents:
-{context[:3000]}
+{context[:max_context_chars]}
 
 Question: {query}
+
+IMPORTANT: If information comes from audio files (.wav), mention specific timestamps in your answer (e.g., "At 0:30, they mentioned..." or "Between 1:15-2:00, the speaker said...").
 
 Provide a clear, accurate answer based on the context:"""
         
@@ -339,16 +409,23 @@ Provide a clear, accurate answer based on the context:"""
             return f"Based on the documents:\n\n{context[:500]}..."
     
     def _format_citations(self, chunks: List[Dict]) -> List[Dict]:
-        """Format chunks into citations"""
-        return [
-            {
+        """Format chunks into citations with page numbers/timestamps"""
+        citations = []
+        for c in chunks:
+            citation_data = {
                 "text": c.get('text', ''),
                 "source": c.get('source', 'Unknown'),
                 "doc_id": c.get('doc_id', ''),
                 "chunk_id": c.get('id', '')
             }
-            for c in chunks
-        ]
+            
+            # Add citation metadata if available (page numbers for PDFs, timestamps for audio)
+            if 'citation' in c:
+                citation_data['citation'] = c['citation']
+            
+            citations.append(citation_data)
+        
+        return citations
     
     def _format_sources(self, chunks: List[Dict]) -> List[Dict]:
         """Format unique sources from chunks"""
@@ -491,7 +568,7 @@ What would you like to know?"""
                         "num_predict": max_tokens,
                     }
                 },
-                timeout=60
+                timeout=120
             )
             
             if response.status_code == 200:
@@ -522,21 +599,159 @@ What would you like to know?"""
         
         self.graph.add_document(doc_info_for_graph)
         
+        # Add to FAISS index for hybrid retrieval
+        print(f"   📊 Adding to FAISS index for semantic search...")
+        try:
+            faiss_chunks = []
+            for i, chunk_data in enumerate(chunks_data):
+                chunk_text = chunk_data if isinstance(chunk_data, str) else chunk_data.get("text", "")
+                faiss_chunks.append({
+                    'text': chunk_text,
+                    'doc_id': str(doc_id),
+                    'chunk_id': f"{doc_id}_chunk_{i}",
+                    'source': file_info.get("filename", "Unknown")
+                })
+            
+            if faiss_chunks:
+                self.hybrid_rag.faiss.add_chunks(faiss_chunks)
+                print(f"   ✅ Added {len(faiss_chunks)} chunks to FAISS index")
+        except Exception as e:
+            print(f"   ⚠️ FAISS indexing error: {e}")
+        
         # Extract entities
         if chunks_data:
             for i, chunk_data in enumerate(chunks_data):
                 chunk_id = f"{doc_id}_chunk_{i}"
                 chunk_text = chunk_data if isinstance(chunk_data, str) else chunk_data.get("text", "")
                 
-                entities = self.entity_extractor.extract_entities(chunk_text)
-                
-                for entity in entities:
-                    self.graph.add_entity({
-                        "name": entity["name"],
-                        "type": entity["type"],
-                        "doc_id": str(doc_id),
-                        "chunk_id": chunk_id
-                    })
+                try:
+                    entities = self.entity_extractor.extract_entities(chunk_text)
+                    
+                    for entity in entities:
+                        # Validate entity has required fields
+                        if not isinstance(entity, dict) or "name" not in entity or "type" not in entity:
+                            continue
+                        
+                        self.graph.add_entity({
+                            "name": entity["name"],
+                            "type": entity["type"],
+                            "doc_id": str(doc_id),
+                            "chunk_id": chunk_id
+                        })
+                except Exception as e:
+                    print(f"   ⚠️ Entity extraction error for chunk {i}: {e}")
+    
+    def _apply_smart_document_filter(
+        self, 
+        query: str, 
+        chunks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Smart filtering: Extract entities from query and match to document sources.
+        This handles queries like "what did Obama say" or "Trump's speech" automatically.
+        
+        Args:
+            query: User query
+            chunks: List of chunks to filter
+            
+        Returns:
+            Filtered chunks if entities match, otherwise original chunks
+        """
+        if not chunks:
+            return chunks
+        
+        try:
+            # Extract entities from the query (people, organizations, etc.)
+            query_entities = self.entity_extractor.extract_entities(query)
+            
+            if not query_entities:
+                # No entities found, return all chunks
+                return chunks
+            
+            # Get unique entity names from query (lowercase for matching)
+            entity_names = set(e['name'].lower() for e in query_entities)
+            
+            # Group chunks by source/document
+            chunks_by_source = {}
+            for chunk in chunks:
+                source = chunk.get('source', 'unknown')
+                if source not in chunks_by_source:
+                    chunks_by_source[source] = []
+                chunks_by_source[source].append(chunk)
+            
+            # Find sources that match query entities
+            matching_sources = []
+            for source in chunks_by_source.keys():
+                source_lower = source.lower()
+                # Check if any query entity appears in the source/filename
+                for entity_name in entity_names:
+                    # Split entity name to handle first/last names (e.g., "Barack Obama" → ["barack", "obama"])
+                    entity_parts = entity_name.split()
+                    # Match if ANY part of the entity name appears in source
+                    if any(part in source_lower for part in entity_parts if len(part) > 2):
+                        matching_sources.append(source)
+                        print(f"      Matched entity '{entity_name}' to source: {source[:60]}...")
+                        break
+            
+            # If we found matching sources, filter to only those chunks
+            if matching_sources:
+                filtered = []
+                for source in matching_sources:
+                    filtered.extend(chunks_by_source[source])
+                return filtered
+            
+            # FALLBACK: No filename matches, try matching entities to chunk content
+            # This handles cases where entity is mentioned IN the conversation but not in filename
+            print(f"      No filename matches, checking chunk content for entities...")
+            content_matched_chunks = []
+            for chunk in chunks:
+                chunk_text = chunk.get('text', '').lower()
+                # Check if any query entity appears in the chunk text
+                for entity_name in entity_names:
+                    entity_parts = entity_name.split()
+                    if any(part in chunk_text for part in entity_parts if len(part) > 2):
+                        content_matched_chunks.append(chunk)
+                        break
+            
+            if content_matched_chunks:
+                print(f"      Matched {len(content_matched_chunks)} chunks by content")
+                return content_matched_chunks
+            
+            # No matches at all, return original chunks
+            return chunks
+            
+        except Exception as e:
+            print(f"   ⚠️ Smart filter error: {e}")
+            return chunks
+    
+    async def delete_document(self, document_id: str, file_path: Optional[str] = None) -> None:
+        """
+        Delete a document from the knowledge graph and optionally delete the physical file
+        
+        Args:
+            document_id: The ID of the document to delete
+            file_path: Optional path to the physical file to delete
+        """
+        # Delete from knowledge graph (Memgraph)
+        success = self.graph.delete_document(document_id)
+        
+        if success:
+            print(f"✅ Deleted document {document_id} from knowledge graph")
+        else:
+            print(f"⚠️  Failed to delete document {document_id} from knowledge graph")
+        
+        # Delete physical file if path provided
+        if file_path:
+            try:
+                from pathlib import Path
+                file = Path(file_path)
+                if file.exists():
+                    file.unlink()
+                    print(f"✅ Deleted physical file: {file_path}")
+                else:
+                    print(f"⚠️  File not found (may have been already deleted): {file_path}")
+            except Exception as e:
+                print(f"❌ Error deleting file {file_path}: {e}")
 
 
 # Singleton instance

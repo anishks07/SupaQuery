@@ -15,11 +15,13 @@ from llama_index.llms.ollama import Ollama
 from llama_index.core.llms import ChatMessage
 from app.services.memgraph_service import get_memgraph_service
 from app.services.entity_extractor import get_entity_extractor
+from app.services.faiss_reranker_service import get_faiss_reranker_service
 
 class GraphRAGService:
     def __init__(self):
-        print("🔧 Initializing GraphRAG...")
+        print("🔧 Initializing Hybrid GraphRAG (FAISS + Reranker + Memgraph)...")
         self.graph = get_memgraph_service()
+        self.faiss = get_faiss_reranker_service()
         self.entity_extractor = get_entity_extractor()
         # Use Ollama directly for better control
         self.ollama_url = "http://localhost:11434"
@@ -29,8 +31,11 @@ class GraphRAGService:
             temperature=0.1,
             base_url=self.ollama_url
         )
-        print("✅ GraphRAG initialized")
+        print("✅ Hybrid GraphRAG initialized")
         print(f"   - LLM: llama3.2 (direct mode)")
+        print(f"   - Vector Search: FAISS ({self.faiss.index.ntotal} vectors)")
+        print(f"   - Reranker: Cross-Encoder")
+        print(f"   - Graph: Memgraph")
     
     def _call_ollama_direct(self, prompt: str, max_tokens: int = 500) -> str:
         """Call Ollama directly via HTTP for faster, more reliable responses"""
@@ -72,7 +77,7 @@ class GraphRAGService:
             if not doc_id:
                 raise ValueError("Document ID is required")
             
-            print(f"📊 Adding document to knowledge graph: {file_info.get('filename', 'Unknown')}")
+            print(f"📊 Adding document to hybrid index: {file_info.get('filename', 'Unknown')}")
             
             # Get chunks - they might be in 'chunks', 'chunk_data', or 'chunks_data'
             chunks_data = file_info.get("chunks_data") or file_info.get("chunk_data", [])
@@ -89,11 +94,24 @@ class GraphRAGService:
             # Add document to Memgraph
             self.graph.add_document(doc_info_for_graph)
             
+            # Prepare chunks for FAISS indexing
+            faiss_chunks = []
+            
             # Extract and add entities from chunks
             if chunks_data:
                 for i, chunk_data in enumerate(chunks_data):
                     chunk_id = f"{doc_id}_chunk_{i}"
                     chunk_text = chunk_data if isinstance(chunk_data, str) else chunk_data.get("text", "")
+                    
+                    # Prepare chunk for FAISS
+                    faiss_chunk = {
+                        'text': chunk_text,
+                        'doc_id': str(doc_id),
+                        'chunk_id': chunk_id,
+                        'source': file_info.get("filename", "Unknown"),
+                        'citation': chunk_data.get("citation", {}) if isinstance(chunk_data, dict) else {}
+                    }
+                    faiss_chunks.append(faiss_chunk)
                     
                     # Extract entities from chunk (synchronous method)
                     entities = self.entity_extractor.extract_entities(chunk_text)
@@ -107,28 +125,54 @@ class GraphRAGService:
                             context=chunk_text[:200]  # First 200 chars as context
                         )
             
-            print(f"✅ Document indexed in knowledge graph")
+            # Add chunks to FAISS index
+            if faiss_chunks:
+                self.faiss.add_chunks(faiss_chunks)
+            
+            print(f"✅ Document indexed in hybrid system (Memgraph + FAISS)")
             
         except Exception as e:
             print(f"❌ Error adding document to graph: {e}")
             raise
     
-    async def delete_document(self, doc_id: str) -> bool:
+    async def delete_document(self, doc_id: str, file_path: Optional[str] = None) -> bool:
         """
-        Delete document from knowledge graph
+        Delete document from knowledge graph and optionally delete the physical file
         
         Args:
             doc_id: Document ID to delete
+            file_path: Optional path to the physical file to delete
             
         Returns:
             True if successful
         """
         try:
-            print(f"🗑️  Deleting document from knowledge graph: {doc_id}")
+            print(f"🗑️  Deleting document from hybrid system: {doc_id}")
+            
+            # Delete from Memgraph
             success = self.graph.delete_document(doc_id)
             if success:
-                print(f"✅ Document {doc_id} deleted from knowledge graph")
-            return success
+                print(f"✅ Document {doc_id} deleted from Memgraph")
+            
+            # Delete from FAISS
+            faiss_success = self.faiss.delete_document(doc_id)
+            if faiss_success:
+                print(f"✅ Document {doc_id} deleted from FAISS")
+            
+            # Delete physical file if path provided
+            if file_path:
+                try:
+                    from pathlib import Path
+                    file = Path(file_path)
+                    if file.exists():
+                        file.unlink()
+                        print(f"✅ Deleted physical file: {file_path}")
+                    else:
+                        print(f"⚠️  File not found (may have been already deleted): {file_path}")
+                except Exception as e:
+                    print(f"❌ Error deleting file {file_path}: {e}")
+            
+            return success and faiss_success
         except Exception as e:
             print(f"❌ Error deleting document from graph: {e}")
             return False
@@ -186,8 +230,14 @@ class GraphRAGService:
         query_lower = query.lower().strip()
         
         # Direct reply patterns (no retrieval needed)
+        # Only match standalone greetings (not "hi what was..." or "hello, can you...")
         greetings = ['hi', 'hello', 'hey', 'greetings']
-        if query_lower in greetings or any(query_lower.startswith(g) for g in greetings):
+        first_word = query_lower.split()[0] if query_lower.split() else query_lower
+        # Only treat as greeting if it's a single word OR followed by punctuation/comma
+        if query_lower in greetings or (first_word in greetings and len(query_lower.split()) == 1):
+            return 'direct_reply'
+        # Also match "hi!" or "hello!" or "hey there"
+        if query_lower in ['hi!', 'hello!', 'hey!', 'hey there', 'hi there', 'hello there']:
             return 'direct_reply'
         
         # Meta questions (about the system itself)
@@ -360,12 +410,41 @@ Example questions:
             if strategy == 'clarify':
                 return self._handle_clarification(query, stats)
             
-            # Strategy is 'retrieve' - proceed with knowledge graph retrieval
+            # Strategy is 'retrieve' - proceed with COMBINED HYBRID RETRIEVAL
+            # Architecture: FAISS (semantic) + Memgraph (relational) → Merge → Deduplicate → Rerank → LLM
             
-            # Query the knowledge graph
-            chunks = self.graph.query_similar_chunks(query, doc_ids=document_ids, limit=top_k)
+            print(f"🔍 Combined Hybrid Retrieval Pipeline:")
             
-            if not chunks:
+            # STAGE 1: FAISS semantic retrieval (top 20 candidates)
+            print(f"   � Stage 1: FAISS semantic search...")
+            faiss_chunks = []
+            try:
+                faiss_chunks = self.faiss.search(query, top_k=20, doc_ids=document_ids)
+                print(f"   ✓ FAISS retrieved {len(faiss_chunks)} chunks")
+            except Exception as e:
+                print(f"   ⚠️ FAISS error: {e}")
+            
+            # STAGE 2: Memgraph relational retrieval (related nodes/chunks)
+            print(f"   🕸️ Stage 2: Memgraph graph traversal...")
+            memgraph_chunks = []
+            try:
+                # Get chunks from Memgraph with traversal limits
+                memgraph_chunks = self._retrieve_with_graph_traversal(
+                    query=query,
+                    doc_ids=document_ids,
+                    max_depth=2,  # Limit graph traversal depth
+                    max_nodes=15  # Limit number of nodes to fetch
+                )
+                print(f"   ✓ Memgraph retrieved {len(memgraph_chunks)} chunks")
+            except Exception as e:
+                print(f"   ⚠️ Memgraph error: {e}")
+            
+            # STAGE 3: Merge and deduplicate
+            print(f"   🔀 Stage 3: Merging and deduplicating...")
+            merged_chunks = self._merge_and_deduplicate(faiss_chunks, memgraph_chunks)
+            print(f"   ✓ Merged to {len(merged_chunks)} unique chunks")
+            
+            if not merged_chunks:
                 return {
                     "answer": "I couldn't find relevant information in the documents. Try rephrasing your question.",
                     "citations": [],
@@ -373,6 +452,14 @@ Example questions:
                     "entities": [],
                     "query": query
                 }
+            
+            # STAGE 4: Cross-encoder reranking on merged results
+            print(f"   🎯 Stage 4: Cross-encoder reranking...")
+            chunks = self.faiss.rerank(query, merged_chunks, top_k=top_k)
+            print(f"   ✓ Reranked to top {len(chunks)} chunks")
+            
+            # STAGE 5: Entity enrichment from selected documents
+            print(f"   🏷️ Stage 5: Entity enrichment...")
             
             # Extract entities from documents
             all_entities = []
@@ -572,3 +659,177 @@ Be specific and include all temporal information found."""
 Question: {query}
 
 Please provide a clear and accurate answer based on the context above."""
+    
+    def _retrieve_with_graph_traversal(
+        self, 
+        query: str, 
+        doc_ids: Optional[List[str]] = None,
+        max_depth: int = 2,
+        max_nodes: int = 15
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve chunks from Memgraph with graph traversal limits
+        
+        Args:
+            query: Query text
+            doc_ids: Optional list of document IDs to filter
+            max_depth: Maximum graph traversal depth (default: 2)
+            max_nodes: Maximum number of nodes to retrieve (default: 15)
+        
+        Returns:
+            List of chunk dictionaries
+        """
+        try:
+            # Get initial chunks from Memgraph
+            chunks = self.graph.query_similar_chunks(
+                query_text=query,
+                doc_ids=doc_ids,
+                limit=max_nodes
+            )
+            
+            # If we got chunks and depth > 1, expand with related chunks
+            if chunks and max_depth > 1:
+                expanded_chunks = []
+                seen_chunk_ids = set()
+                
+                # Add initial chunks
+                for chunk in chunks[:max_nodes]:
+                    chunk_id = chunk.get('chunk_id') or chunk.get('id')
+                    if chunk_id and chunk_id not in seen_chunk_ids:
+                        expanded_chunks.append(chunk)
+                        seen_chunk_ids.add(chunk_id)
+                
+                # For each chunk, get related chunks (depth 2)
+                if max_depth >= 2 and len(expanded_chunks) < max_nodes:
+                    for chunk in chunks[:5]:  # Only expand from top 5 to limit growth
+                        doc_id = chunk.get('doc_id')
+                        if doc_id:
+                            try:
+                                # Get related chunks from same document
+                                related = self.graph.query_similar_chunks(
+                                    query_text=query,
+                                    doc_ids=[doc_id],
+                                    limit=3  # Only 3 related per chunk
+                                )
+                                
+                                for rel_chunk in related:
+                                    if len(expanded_chunks) >= max_nodes:
+                                        break
+                                    chunk_id = rel_chunk.get('chunk_id') or rel_chunk.get('id')
+                                    if chunk_id and chunk_id not in seen_chunk_ids:
+                                        expanded_chunks.append(rel_chunk)
+                                        seen_chunk_ids.add(chunk_id)
+                            except Exception as e:
+                                print(f"   ⚠️ Could not expand chunk {chunk_id}: {e}")
+                                continue
+                        
+                        if len(expanded_chunks) >= max_nodes:
+                            break
+                
+                return expanded_chunks[:max_nodes]
+            
+            return chunks
+            
+        except Exception as e:
+            print(f"⚠️ Graph traversal error: {e}")
+            return []
+    
+    def _merge_and_deduplicate(
+        self, 
+        faiss_chunks: List[Dict[str, Any]], 
+        memgraph_chunks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Merge chunks from FAISS and Memgraph, removing duplicates
+        
+        Deduplication strategy:
+        1. Use chunk_id if available
+        2. Use content hash (first 100 chars of text)
+        3. Keep FAISS version if duplicate (has better relevance scores)
+        
+        Args:
+            faiss_chunks: Chunks from FAISS search
+            memgraph_chunks: Chunks from Memgraph traversal
+        
+        Returns:
+            Deduplicated list of chunks
+        """
+        merged = []
+        seen_ids = set()
+        seen_hashes = set()
+        
+        # Helper function to get chunk identifier
+        def get_chunk_key(chunk: Dict) -> tuple:
+            chunk_id = chunk.get('chunk_id') or chunk.get('id')
+            text = chunk.get('text', '')
+            text_hash = hash(text[:100]) if text else None
+            return (chunk_id, text_hash)
+        
+        # Add FAISS chunks first (they have relevance scores)
+        faiss_added = 0
+        faiss_skipped = 0
+        obama_count = 0
+        pdf_count = 0
+        
+        for chunk in faiss_chunks:
+            chunk_id, text_hash = get_chunk_key(chunk)
+            source = chunk.get('source', '')
+            
+            # Check for duplicates
+            is_duplicate = False
+            if chunk_id and chunk_id in seen_ids:
+                is_duplicate = True
+                faiss_skipped += 1
+            elif text_hash and text_hash in seen_hashes:
+                is_duplicate = True
+                faiss_skipped += 1
+            
+            if not is_duplicate:
+                # Mark as from FAISS
+                chunk['source_system'] = 'faiss'
+                merged.append(chunk)
+                faiss_added += 1
+                
+                # Count by source type
+                if 'obama' in source.lower() or '.mp3' in source.lower():
+                    obama_count += 1
+                elif '.pdf' in source.lower():
+                    pdf_count += 1
+                
+                if chunk_id:
+                    seen_ids.add(chunk_id)
+                if text_hash:
+                    seen_hashes.add(text_hash)
+        
+        print(f"      FAISS: {faiss_added} added ({obama_count} Obama, {pdf_count} PDF), {faiss_skipped} skipped as duplicates")
+        
+        # Add Memgraph chunks (skip duplicates)
+        memgraph_added = 0
+        memgraph_skipped = 0
+        for chunk in memgraph_chunks:
+            chunk_id, text_hash = get_chunk_key(chunk)
+            
+            # Check for duplicates
+            is_duplicate = False
+            if chunk_id and chunk_id in seen_ids:
+                is_duplicate = True
+            elif text_hash and text_hash in seen_hashes:
+                is_duplicate = True
+            
+            if not is_duplicate:
+                # Mark as from Memgraph
+                chunk['source_system'] = 'memgraph'
+                merged.append(chunk)
+                memgraph_added += 1
+                
+                if chunk_id:
+                    seen_ids.add(chunk_id)
+                if text_hash:
+                    seen_hashes.add(text_hash)
+            else:
+                memgraph_skipped += 1
+        
+        print(f"      Memgraph: {memgraph_added} added, {memgraph_skipped} skipped as duplicates")
+        print(f"      Final merged count: {len(merged)} ({faiss_added} from FAISS + {memgraph_added} from Memgraph)")
+        
+        return merged

@@ -334,11 +334,31 @@ Please provide a clear, accurate answer based on the context above.""")
             "total_entities": stats['entities']
         }]
     
-    async def delete_document(self, document_id: str) -> None:
-        """Delete a document from the knowledge graph"""
+    async def delete_document(self, document_id: str, file_path: Optional[str] = None) -> None:
+        """
+        Delete a document from the knowledge graph and optionally delete the physical file
+        
+        Args:
+            document_id: The ID of the document to delete
+            file_path: Optional path to the physical file to delete
+        """
+        # Delete from knowledge graph
         success = self.graph.delete_document(document_id)
         
         if success:
             print(f"✅ Deleted document {document_id} from knowledge graph")
         else:
-            print(f"⚠️  Failed to delete document {document_id}")
+            print(f"⚠️  Failed to delete document {document_id} from knowledge graph")
+        
+        # Delete physical file if path provided
+        if file_path:
+            try:
+                from pathlib import Path
+                file = Path(file_path)
+                if file.exists():
+                    file.unlink()
+                    print(f"✅ Deleted physical file: {file_path}")
+                else:
+                    print(f"⚠️  File not found (may have been already deleted): {file_path}")
+            except Exception as e:
+                print(f"❌ Error deleting file {file_path}: {e}")

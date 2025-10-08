@@ -126,7 +126,13 @@ class MemgraphService:
                 # Generate a simple embedding hash for now
                 embedding_hash = hashlib.sha256(chunk_text.encode()).hexdigest()[:16]
                 
-                # Create chunk node
+                # Extract citation metadata if available
+                citation_json = None
+                if isinstance(chunk_data, dict) and 'citation' in chunk_data:
+                    import json
+                    citation_json = json.dumps(chunk_data['citation'])
+                
+                # Create chunk node with citation metadata
                 self.db.execute("""
                     MATCH (d:Document {id: $doc_id})
                     MERGE (c:Chunk {id: $chunk_id})
@@ -134,6 +140,7 @@ class MemgraphService:
                         c.text = $text,
                         c.chunk_index = $index,
                         c.embedding_hash = $embedding_hash,
+                        c.citation_json = $citation_json,
                         c.created_at = $created_at
                     MERGE (d)-[:CONTAINS]->(c)
                 """, {
@@ -142,6 +149,7 @@ class MemgraphService:
                     "text": chunk_text,
                     "index": i,
                     "embedding_hash": embedding_hash,
+                    "citation_json": citation_json,
                     "created_at": current_time
                 })
             
@@ -216,6 +224,7 @@ class MemgraphService:
     def query_similar_chunks(self, query_text: str, doc_ids: Optional[List[str]] = None, limit: int = 5) -> List[Dict]:
         """
         Query for similar chunks with timeout protection and retry logic
+        Uses keyword matching for relevance when doc_ids is None
         
         Args:
             query_text: Query text
@@ -223,37 +232,49 @@ class MemgraphService:
             limit: Maximum number of results
             
         Returns:
-            List of chunk dictionaries with text and metadata
+            List of chunk dictionaries with text and metadata, sorted by relevance
         """
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                # Simplified query with better performance
+                # If specific documents are requested, use them
                 if doc_ids:
-                    # Use LIMIT in subquery for better performance
                     result = self.db.execute_and_fetch("""
                         MATCH (d:Document)-[:CONTAINS]->(c:Chunk)
                         WHERE d.id IN $doc_ids
                         WITH c, d
                         LIMIT $limit
-                        RETURN c.text as text, c.id as chunk_id, d.filename as source, d.id as doc_id
+                        RETURN c.text as text, c.id as chunk_id, d.filename as source, d.id as doc_id, c.citation_json as citation_json
                     """, {"doc_ids": doc_ids, "limit": limit})
                 else:
+                    # When no docs specified, get more chunks for relevance ranking
+                    # Get 3x the limit to ensure good results after ranking
+                    fetch_limit = limit * 3
                     result = self.db.execute_and_fetch("""
                         MATCH (d:Document)-[:CONTAINS]->(c:Chunk)
                         WITH c, d
                         LIMIT $limit
-                        RETURN c.text as text, c.id as chunk_id, d.filename as source, d.id as doc_id
-                    """, {"limit": limit})
+                        RETURN c.text as text, c.id as chunk_id, d.filename as source, d.id as doc_id, c.citation_json as citation_json
+                    """, {"limit": fetch_limit})
                 
                 chunks = []
                 for row in result:
-                    chunks.append({
+                    chunk_data = {
                         "text": row["text"],
                         "chunk_id": row["chunk_id"],
                         "source": row["source"],
                         "doc_id": row["doc_id"]
-                    })
+                    }
+                    
+                    # Parse citation metadata if available
+                    if row.get("citation_json"):
+                        try:
+                            import json
+                            chunk_data["citation"] = json.loads(row["citation_json"])
+                        except:
+                            pass
+                    
+                    chunks.append(chunk_data)
                 
                 if chunks:
                     print(f"   ✓ Retrieved {len(chunks)} chunks")

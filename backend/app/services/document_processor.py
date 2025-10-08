@@ -13,7 +13,7 @@ from typing import Dict, Any, List
 import mimetypes
 
 # PDF processing
-from pypdf import PdfReader
+import fitz  # PyMuPDF
 
 # DOCX processing
 from docx import Document
@@ -44,7 +44,7 @@ class DocumentProcessor:
         """Lazy load Whisper model"""
         if self.whisper_model is None:
             print("Loading Whisper model...")
-            self.whisper_model = whisper.load_model("base")
+            self.whisper_model = whisper.load_model("tiny")
         return self.whisper_model
     
     async def process_file(self, file_path: str, original_filename: str, file_id: str) -> Dict[str, Any]:
@@ -73,22 +73,29 @@ class DocumentProcessor:
             raise ValueError(f"Unsupported file type: {file_path.suffix}")
     
     async def _process_pdf(self, file_path: Path, file_id: str, original_filename: str) -> Dict[str, Any]:
-        """Extract text from PDF with page number citations"""
+        """Extract text from PDF with page number citations using PyMuPDF"""
         try:
-            reader = PdfReader(str(file_path))
+            # Open PDF with PyMuPDF
+            doc = fitz.open(str(file_path))
             text = ""
             page_mappings = []  # Track which character positions belong to which page
             
-            for page_num, page in enumerate(reader.pages, start=1):
-                page_text = page.extract_text()
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                # Extract text with better accuracy using PyMuPDF
+                page_text = page.get_text()
                 start_pos = len(text)
                 text += page_text + "\n\n"
                 end_pos = len(text)
                 page_mappings.append({
-                    "page": page_num,
+                    "page": page_num + 1,  # Use 1-based indexing for user-facing page numbers
                     "start": start_pos,
                     "end": end_pos
                 })
+            
+            # Store page count before closing
+            total_pages = len(doc)
+            doc.close()
             
             # Chunk the text with page number tracking
             chunks = self._chunk_text_with_citations(text, page_mappings, "pdf")
@@ -100,7 +107,7 @@ class DocumentProcessor:
                 "text": text,
                 "chunks": len(chunks),
                 "chunk_data": chunks,
-                "pages": len(reader.pages),
+                "pages": total_pages,
                 "page_mappings": page_mappings
             }
         except Exception as e:
