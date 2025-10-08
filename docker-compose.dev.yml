@@ -1,0 +1,114 @@
+version: '3.8'
+
+# Development Docker Compose configuration
+# Usage: docker-compose -f docker-compose.dev.yml up
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: supaquery-postgres-dev
+    environment:
+      POSTGRES_DB: supaquery
+      POSTGRES_USER: supaquery
+      POSTGRES_PASSWORD: supaquery_dev
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./backend/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    networks:
+      - supaquery-dev
+    restart: unless-stopped
+
+  # Memgraph Knowledge Graph
+  memgraph:
+    image: memgraph/memgraph-platform:latest
+    container_name: supaquery-memgraph-dev
+    ports:
+      - "7687:7687"
+      - "7444:7444"
+      - "3001:3000"
+    volumes:
+      - memgraph_dev_data:/var/lib/memgraph
+    networks:
+      - supaquery-dev
+    restart: unless-stopped
+
+  # Ollama LLM Service
+  ollama:
+    image: ollama/ollama:latest
+    container_name: supaquery-ollama-dev
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_dev_data:/root/.ollama
+    networks:
+      - supaquery-dev
+    restart: unless-stopped
+
+  # Backend with hot-reload
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: supaquery-backend-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://supaquery:supaquery_dev@postgres:5432/supaquery
+      - SECRET_KEY=dev-secret-key-change-in-production
+      - ACCESS_TOKEN_EXPIRE_MINUTES=1440  # 24 hours for dev
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=llama3.2:latest
+      - MEMGRAPH_HOST=memgraph
+      - MEMGRAPH_PORT=7687
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+      - WHISPER_MODEL=tiny  # Faster for development
+    volumes:
+      - ./backend:/app  # Mount entire backend for hot-reload
+      - backend_uploads:/app/uploads
+      - backend_storage:/app/storage
+    depends_on:
+      - postgres
+      - memgraph
+      - ollama
+    networks:
+      - supaquery-dev
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+    restart: unless-stopped
+
+  # Frontend with hot-reload
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: supaquery-frontend-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=development
+      - WATCHPACK_POLLING=true  # Enable polling for Docker
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    networks:
+      - supaquery-dev
+    command: npm run dev
+    restart: unless-stopped
+
+networks:
+  supaquery-dev:
+    driver: bridge
+
+volumes:
+  postgres_dev_data:
+  memgraph_dev_data:
+  ollama_dev_data:
+  backend_uploads:
+  backend_storage:
