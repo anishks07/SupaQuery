@@ -1,35 +1,76 @@
-# Use Python 3.11 slim image
-FROM python:3.11-slim
+# Multi-stage build for optimized image size
+FROM python:3.13-slim as builder
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Download spaCy model
+RUN python -m spacy download en_core_web_sm
+
+# Production stage
+FROM python:3.13-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
     ffmpeg \
     libsndfile1 \
+    libpq5 \
+    curl \
+    netcat-traditional \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Create non-root user
+RUN useradd -m -u 1000 supaquery && \
+    mkdir -p /app/uploads /app/storage && \
+    chown -R supaquery:supaquery /app
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
 # Copy application code
-COPY . .
+COPY --chown=supaquery:supaquery . .
 
-# Create necessary directories
-RUN mkdir -p uploads storage/chroma_db
+# Switch to non-root user
+USER supaquery
 
 # Expose port
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/api/health')"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
 
 # Run the application
+# Development: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# Production: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -5,20 +5,36 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  // 禁用 Next.js 热重载，由 nodemon 处理重编译
-  reactStrictMode: false,
+  eslint: {
+    // Ignore ESLint errors during builds
+    ignoreDuringBuilds: true,
+  },
+  // Enable standalone output for Docker
+  output: 'standalone',
+  // Disable strict mode in production for better compatibility
+  reactStrictMode: process.env.NODE_ENV === 'development',
+  // Webpack configuration
   webpack: (config, { dev }) => {
     if (dev) {
-      // 禁用 webpack 的热模块替换
+      // Enable hot module replacement in development
       config.watchOptions = {
-        ignored: ['**/*'], // 忽略所有文件变化
+        poll: 1000, // Check for changes every second (useful for Docker)
+        aggregateTimeout: 300,
       };
     }
     return config;
   },
-  eslint: {
-    // 构建时忽略ESLint错误
-    ignoreDuringBuilds: true,
+  // Image optimization configuration
+  images: {
+    domains: ['localhost'],
+    unoptimized: process.env.NODE_ENV === 'development',
+  },
+  // Experimental features
+  experimental: {
+    // Enable server actions if needed
+    serverActions: {
+      bodySizeLimit: '2mb',
+    },
   },
 };
 
