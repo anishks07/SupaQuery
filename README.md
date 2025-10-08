@@ -126,7 +126,7 @@ chmod +x setup.sh
 
 * **LLM Models:** LLaMA 7B (4-bit quantized), MPT-7B, Dia / OpenLLaMA 3B
 
-```bash* **Embeddings:** `all-MiniLM-L6-v2` (text), CLIP ViT-B/32 (image)
+```bash* **Embeddings:** `all-MiniLM-L6-v2` (text), CLIP ViT-B/32 (image)```
 
 # Clone the repository* **Speech-to-Text:** Whisper Tiny (audio)
 
@@ -148,7 +148,7 @@ docker-compose up --buildThis system is ideal for environments where **data priv
 
 # Backend API: http://localhost:80001. Clone the repository
 
-```2. Set up Python virtual environment and install dependencies
+```2. Set up Python virtual environment and install dependencies```
 
 3. Run the backend API (FastAPI)
 
