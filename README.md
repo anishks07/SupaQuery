@@ -8,7 +8,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/License-Proprietary-red.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 [Features](#-features) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [Documentation](#-documentation)
 
@@ -1250,9 +1250,28 @@ We welcome contributions! Here's how to get started:
 
 ## 📄 License
 
-This project is proprietary software. All rights reserved.
+This project is licensed under the **GNU General Public License v3.0** (GPLv3).
 
-For licensing inquiries, please contact the repository owner.
+### What this means:
+- ✅ **Freedom to use**: You can use this software for any purpose
+- ✅ **Freedom to study**: You can examine and modify the source code  
+- ✅ **Freedom to distribute**: You can share copies with others
+- ✅ **Freedom to improve**: You can distribute modified versions
+
+### Key Requirements:
+- 📋 **Share Source Code**: If you distribute this software, you must make the source code available
+- 🏷️ **License Notice**: Include the GPL license notice in derivative works
+- 📝 **State Changes**: Document any modifications you make to the code
+- 🔓 **Keep Open**: Derivative works must also be licensed under GPLv3
+
+### Commercial Use:
+- You **can** use this software commercially
+- You **can** charge for distribution or support services
+- You **must** still comply with GPLv3 requirements (share source code)
+
+For the complete license text, see the [LICENSE](LICENSE) file.
+
+**TLDR**: This is free and open-source software. You can use, modify, and distribute it freely, but any derivative work must also be open-source under GPLv3.
 
 ---
 
