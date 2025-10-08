@@ -113,8 +113,7 @@ cd SupaQuery
 chmod +x setup.sh
 ./setup.sh
 
-
-
+```
 ---**Tech Stack:**
 
 
