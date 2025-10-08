@@ -126,7 +126,7 @@ chmod +x setup.sh
 
 * **LLM Models:** LLaMA 7B (4-bit quantized), MPT-7B, Dia / OpenLLaMA 3B
 
-```bash* ```**Embeddings:** `all-MiniLM-L6-v2` (text), CLIP ViT-B/32 (image)
+**Embeddings:** `all-MiniLM-L6-v2` (text), CLIP ViT-B/32 (image)
 
 # Clone the repository* **Speech-to-Text:** Whisper Tiny (audio)
 
@@ -166,7 +166,7 @@ docker-compose up --buildThis system is ideal for environments where **data priv
 
 chmod +x setup.sh
 
-./setup.shIf you want, I can also **add a “Features Diagram + Data Flow” section** and **badge-style highlights** to make this README **look very professional and hackathon-ready**.
+./setup.sh
 
 # The script will:
 # - Install Ollama and download llama3.2 model

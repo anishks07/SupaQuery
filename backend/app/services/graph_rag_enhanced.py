@@ -385,7 +385,7 @@ class EnhancedGraphRAGService:
         if query_type == 'summary':
             prompt = f"""Based on these document excerpts, provide a concise summary.
 
-IMPORTANT: If the source is an audio file (.wav), include specific timestamps in your answer (e.g., "At 0:30, ..." or "Between 1:15-2:00, ...").
+IMPORTANT: If the source is an audio file (.wav,.mp3,.mp4..etc..), include specific timestamps in your answer (e.g., "At 0:30, ..." or "Between 1:15-2:00, ...").
 
 {context[:max_context_chars]}
 
