@@ -27,7 +27,7 @@
 - **🔄 Multi-Query Generation**: Generates multiple variations to improve retrieval quality
 - **✨ Answer Evaluation**: AI-powered quality assessment with automatic retry on poor answers
 - **👥 Enterprise RBAC**: Role-based access control with Admin, User, and Viewer roles
-- **📁 Multi-Modal Support**: Text, images (OCR), and audio (speech-to-text) processingQuery - Offline Multimodal RAG SystemSure! Here’s a **professional, concise, and clear README description** for your **Offline Multimodal RAG System** project. I’ve written it in a way that’s suitable for GitHub or portfolio showcase:
+- **📁 Multi-Modal Support**: Text, images (OCR), and audio (speech-to-text) processingQuery - Offline Multimodal RAG System
 
 
 
