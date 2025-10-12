@@ -469,7 +469,6 @@ AI: [Contextual follow-up answer]
 # PostgreSQL Database
 DATABASE_URL=postgresql+asyncpg://username@localhost/supaquery
 
-# JWT Authentication
 SECRET_KEY=your-secret-key-here-use-openssl-rand-hex-32
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
